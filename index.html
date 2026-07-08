@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+    <title>SECTOR LoveHub</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- SVG Icon Definitions (Legacy Support) -->
+    <svg style="display:none">
+        <defs>
+            <symbol id="icon-house" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></symbol>
+            <symbol id="icon-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></symbol>
+            <symbol id="icon-heart" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></symbol>
+            <symbol id="icon-photo" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></symbol>
+            <symbol id="icon-person" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></symbol>
+            <symbol id="icon-envelope" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></symbol>
+            <symbol id="icon-gamepad" viewBox="0 0 24 24"><line x1="6" y1="12" x2="10" y2="12"></line><line x1="8" y1="10" x2="8" y2="14"></line><line x1="15" y1="13" x2="15.01" y2="13"></line><line x1="18" y1="11" x2="18.01" y2="11"></line><rect x="2" y="6" width="20" height="12" rx="2"></rect></symbol>
+            <symbol id="icon-location" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></symbol>
+            <symbol id="icon-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></symbol>
+            <symbol id="icon-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></symbol>
+            <symbol id="icon-star" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></symbol>
+            <symbol id="icon-close" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></symbol>
+            <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></symbol>
+            <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></symbol>
+            <symbol id="icon-aurora" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5M2 12l10 5 10-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+            <symbol id="icon-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></symbol>
+            <symbol id="icon-note" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></symbol>
+            <symbol id="icon-comment" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></symbol>
+            <symbol id="icon-trophy" viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"></path><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"></path><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"></path></symbol>
+            <symbol id="icon-login" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></symbol>
+            <symbol id="icon-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></symbol>
+            <symbol id="icon-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></symbol>
+            <symbol id="icon-sector" viewBox="0 0 120 120"><circle cx="60" cy="60" r="50" fill="none" stroke="currentColor" stroke-width="4" opacity="0.8"></circle><path d="M40 45 L55 45 L55 55 L65 55 L65 45 L80 45 L80 75 L65 75 L65 65 L55 65 L55 75 L40 75 Z" fill="currentColor" opacity="0.9"></path></symbol>
+        </defs>
+    </svg>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Splash Screen -->
+    <div id="splash">
+        <div class="splash-logo">
+            <svg class="sector-mark" viewBox="0 0 120 120" width="80" height="80">
+                <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="2"></circle>
+                <path d="M40 45 L55 45 L55 55 L65 55 L65 45 L80 45 L80 75 L65 75 L65 65 L55 65 L55 75 L40 75 Z" fill="rgba(255,255,255,0.9)"></path>
+            </svg>
+            <div class="sector-text">SECTOR</div>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="app" class="theme-night">
+        <div class="pages-container">
+            <!-- HOME PAGE -->
+            <section class="page active" data-page="home">
+                <div class="home-header">
+                    <div class="brand-mark">
+                        <svg width="28" height="28"><use href="#icon-sector"></use></svg>
+                        <span class="brand-name">SECTOR</span>
+                    </div>
+                    <div class="greeting" id="greeting">Good evening</div>
+                </div>
+                <div class="relationship-counter">
+                    <div class="counter-number" id="daysCounter">0</div>
+                    <div class="counter-label">Days Together</div>
+                </div>
+                <div class="couple-hero glass-card">
+                    <div class="couple-avatars">
+                        <div class="avatar avatar-p">P<div class="online-dot"></div></div>
+                        <div class="heart-connection"><svg viewBox="0 0 24 24"><use href="#icon-heart"></use></svg></div>
+                        <div class="avatar avatar-s">S<div class="online-dot"></div></div>
+                    </div>
+                    <div class="couple-status" id="relationshipStatus">In a relationship</div>
+                </div>
+                <div class="latest-memory glass-card" id="latestMemoryCard">
+                    <div class="memory-image" id="latestMemoryImage"></div>
+                    <div class="memory-content">
+                        <div class="memory-title">Latest Memory</div>
+                        <div class="memory-meta">
+                            <span id="latestMemoryDate">Loading...</span>
+                            <span>•</span>
+                            <span id="latestMemoryLocation">Loading...</span>
+                        </div>
+                        <div class="memory-quote" id="latestMemoryQuote">Loading memory...</div>
+                    </div>
+                </div>
+                <div class="action-grid">
+                    <div class="action-card glass-card" data-nav="love">
+                        <div class="action-icon"><svg><use href="#icon-envelope"></use></svg></div>
+                        <div class="action-title">Love Letter</div>
+                        <div class="action-desc">Write your feelings</div>
+                    </div>
+                    <div class="action-card glass-card" data-nav="memories">
+                        <div class="action-icon"><svg><use href="#icon-photo"></use></svg></div>
+                        <div class="action-title">Memories</div>
+                        <div class="action-desc" id="memoriesCount">0 photos</div>
+                    </div>
+                    <div class="action-card glass-card" data-nav="games">
+                        <div class="action-icon"><svg><use href="#icon-gamepad"></use></svg></div>
+                        <div class="action-title">Games</div>
+                        <div class="action-desc">Play together</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CHAT PAGE -->
+            <section class="page" data-page="chat">
+                <div class="page-header">
+                    <h1 class="page-title">Messages</h1>
+                </div>
+                <div class="chat-conversation" id="chatConversation"></div>
+                <div class="chat-input-bar">
+                    <input type="text" class="chat-input" placeholder="Message..." id="chatInput">
+                    <button class="send-btn" id="sendBtn">
+                        <svg width="20" height="20"><use href="#icon-send"></use></svg>
+                    </button>
+                </div>
+            </section>
+
+            <!-- LOVE PAGE -->
+            <section class="page" data-page="love">
+                <div class="page-header">
+                    <h1 class="page-title">Love</h1>
+                </div>
+                <div class="love-stats" id="loveStats"></div>
+                <div class="love-letter glass-card">
+                    <div class="letter-header">Love Letter</div>
+                    <div class="letter-content" id="loveLetterContent">Loading...</div>
+                    <div class="letter-from" id="loveLetterFrom">Loading...</div>
+                </div>
+                <div class="love-milestones" id="loveMilestones">
+                    <div class="section-title">Milestones</div>
+                </div>
+            </section>
+
+            <!-- GAMES PAGE -->
+            <section class="page" data-page="games">
+                <div class="page-header">
+                    <h1 class="page-title">Game Center</h1>
+                </div>
+                <div class="games-grid" id="gamesGrid"></div>
+            </section>
+
+            <!-- MEMORIES PAGE -->
+            <section class="page" data-page="memories">
+                <div class="page-header">
+                    <h1 class="page-title">Memories</h1>
+                </div>
+                <div class="memories-grid" id="memoriesGrid"></div>
+            </section>
+
+            <!-- TIMELINE PAGE -->
+            <section class="page" data-page="timeline">
+                <div class="page-header">
+                    <h1 class="page-title">Timeline</h1>
+                </div>
+                <div class="timeline-container" id="timelineContainer"></div>
+            </section>
+
+            <!-- PROFILE PAGE -->
+            <section class="page" data-page="profile">
+                <div class="page-header">
+                    <h1 class="page-title">Profile</h1>
+                    <button class="icon-btn" id="settingsBtn">
+                        <svg width="20" height="20"><use href="#icon-settings"></use></svg>
+                    </button>
+                </div>
+                <div class="profile-hero">
+                    <div class="profile-avatar-large">
+                        <div class="avatar-inner-large" id="profileAvatarInitial">P</div>
+                    </div>
+                    <div class="profile-name-large" id="profileName">Loading...</div>
+                    <div class="profile-subtitle" id="profileSubtitle">Loading...</div>
+                </div>
+                <div class="section-title">Health</div>
+                <div class="health-grid" id="healthGrid"></div>
+                <div class="section-title">Personal</div>
+                <div class="info-card glass-card" id="personalInfoCard"></div>
+                <div class="section-title">Account</div>
+                <div class="account-actions">
+                    <button class="account-btn glass-card" id="loginBtn">
+                        <svg width="20" height="20"><use href="#icon-login"></use></svg>
+                        <span>Login</span>
+                    </button>
+                    <button class="account-btn glass-card" id="logoutBtn" style="display:none;">
+                        <svg width="20" height="20"><use href="#icon-logout"></use></svg>
+                        <span>Logout</span>
+                    </button>
+                </div>
+            </section>
+        </div>
+
+        <!-- Memory Detail Modal -->
+        <div class="modal-overlay" id="memoryModal">
+            <div class="modal-content glass-card">
+                <button class="modal-close" id="closeMemoryModal">
+                    <svg width="20" height="20"><use href="#icon-close"></use></svg>
+                </button>
+                <div class="modal-image" id="modalImage"></div>
+                <div class="modal-body">
+                    <div class="modal-date" id="modalDate"></div>
+                    <div class="modal-location" id="modalLocation">
+                        <svg width="14" height="14"><use href="#icon-location"></use></svg>
+                        <span></span>
+                    </div>
+                    <div class="modal-music" id="modalMusic">
+                        <svg width="14" height="14"><use href="#icon-music"></use></svg>
+                        <span></span>
+                    </div>
+                    <div class="modal-notes" id="modalNotes">
+                        <svg width="14" height="14"><use href="#icon-note"></use></svg>
+                        <span></span>
+                    </div>
+                    <div class="modal-comments">
+                        <svg width="14" height="14"><use href="#icon-comment"></use></svg>
+                        <div class="comment-list" id="commentList"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Login Bottom Sheet -->
+        <div class="login-overlay" id="loginOverlay">
+            <div class="login-sheet">
+                <div class="login-handle"></div>
+                <div class="login-header">
+                    <h2>Welcome Back</h2>
+                    <p>Login to your SECTOR LoveHub account</p>
+                </div>
+                <div class="login-form">
+                    <input type="text" class="login-input" placeholder="Username" id="loginUsername">
+                    <input type="password" class="login-input" placeholder="Password" id="loginPassword">
+                    <button class="login-submit" id="loginSubmit">Login</button>
+                </div>
+                <button class="login-cancel" id="loginCancel">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Settings Bottom Sheet -->
+        <div class="settings-overlay" id="settingsOverlay">
+            <div class="settings-sheet">
+                <div class="settings-handle"></div>
+                <div class="settings-header">
+                    <h2>Settings</h2>
+                </div>
+                <div class="theme-selector">
+                    <div class="section-title">Theme</div>
+                    <div class="theme-options">
+                        <button class="theme-option" data-theme="day">
+                            <svg width="24" height="24"><use href="#icon-sun"></use></svg>
+                            <span>Day</span>
+                        </button>
+                        <button class="theme-option" data-theme="night">
+                            <svg width="24" height="24"><use href="#icon-moon"></use></svg>
+                            <span>Night</span>
+                        </button>
+                        <button class="theme-option" data-theme="aurora">
+                            <svg width="24" height="24"><use href="#icon-aurora"></use></svg>
+                            <span>Aurora</span>
+                        </button>
+                    </div>
+                </div>
+                <button class="settings-close" id="settingsClose">Done</button>
+            </div>
+        </div>
+
+        <!-- Tab Bar -->
+        <nav class="tab-bar">
+            <button class="tab-item active" data-tab="home">
+                <div class="tab-icon"><svg width="24" height="24"><use href="#icon-house"></use></svg></div>
+                <span class="tab-label">Home</span>
+            </button>
+            <button class="tab-item" data-tab="chat">
+                <div class="tab-icon"><svg width="24" height="24"><use href="#icon-message"></use></svg></div>
+                <span class="tab-label">Chat</span>
+            </button>
+            <button class="tab-item" data-tab="love">
+                <div class="tab-icon"><svg width="24" height="24"><use href="#icon-heart"></use></svg></div>
+                <span class="tab-label">Love</span>
+            </button>
+            <button class="tab-item" data-tab="games">
+                <div class="tab-icon"><svg width="24" height="24"><use href="#icon-gamepad"></use></svg></div>
+                <span class="tab-label">Games</span>
+            </button>
+            <button class="tab-item" data-tab="profile">
+                <div class="tab-icon"><svg width="24" height="24"><use href="#icon-person"></use></svg></div>
+                <span class="tab-label">Profile</span>
+            </button>
+        </nav>
+    </div>
+
+    <script src="icons.js"></script>
+    <script src="data.js"></script>
+    <script src="utils.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
+
