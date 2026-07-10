@@ -9,7 +9,6 @@ class LoveHub {
         try {
             // Check existing session
             this.currentUser = authService.getCurrentUser();
-            
             this.setupSplash();
             this.setupTheme();
             this.setupNavigation();
@@ -21,7 +20,6 @@ class LoveHub {
             this.setupAvatarUpload();
             this.setupDataManagement();
             this.setupInteractions();
-            
             this.renderAll();
             
             // If logged in, show logged-in UI
@@ -37,10 +35,11 @@ class LoveHub {
         const splash = document.getElementById('splash');
         const logo = document.querySelector('.splash-logo');
         if (!splash || !logo) return;
-        
+
+        // Cinematic timing — Apple keynote style
         setTimeout(() => logo.classList.add('expand'), 2500);
         setTimeout(() => splash.classList.add('fade-out'), 3200);
-        setTimeout(() => splash.style.display = 'none', 4000);
+        setTimeout(() => splash.style.display = 'none', 4400);
     }
 
     setupTheme() {
@@ -71,7 +70,7 @@ class LoveHub {
     }
 
     setupNavigation() {
-        document.querySelectorAll('.tab-item').forEach(tab => {
+        document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => this.navigateTo(tab.dataset.tab));
         });
         document.querySelectorAll('[data-nav]').forEach(btn => {
@@ -81,11 +80,45 @@ class LoveHub {
 
     navigateTo(pageName) {
         if (this.currentPage === pageName) return;
-        document.querySelectorAll('.tab-item').forEach(tab => 
+
+        // Update tabs immediately
+        document.querySelectorAll('.tab').forEach(tab => 
             tab.classList.toggle('active', tab.dataset.tab === pageName));
-        document.querySelectorAll('.page').forEach(page => 
-            page.classList.toggle('active', page.dataset.page === pageName));
+
+        // Smooth page transition with spring animation
+        const currentPageEl = document.querySelector('.page.active');
+        const nextPageEl = document.querySelector(`.page[data-page="${pageName}"]`);
+
+        if (currentPageEl && nextPageEl) {
+            // Fade out current
+            currentPageEl.style.opacity = '0';
+            currentPageEl.style.transform = 'translateY(-10px)';
+
+            setTimeout(() => {
+                currentPageEl.classList.remove('active');
+                currentPageEl.style.opacity = '';
+                currentPageEl.style.transform = '';
+
+                // Fade in next
+                nextPageEl.classList.add('active');
+                nextPageEl.style.opacity = '0';
+                nextPageEl.style.transform = 'translateY(10px)';
+
+                requestAnimationFrame(() => {
+                    nextPageEl.style.opacity = '1';
+                    nextPageEl.style.transform = 'translateY(0)';
+                });
+            }, 200);
+        } else {
+            // Fallback
+            document.querySelectorAll('.page').forEach(page => 
+                page.classList.toggle('active', page.dataset.page === pageName));
+        }
+
         this.currentPage = pageName;
+
+        // Haptic feedback
+        if (navigator.vibrate) navigator.vibrate(8);
     }
 
     renderAll() {
@@ -99,59 +132,69 @@ class LoveHub {
         this.startECG();
     }
 
-    // ECG Animation
+    // Realistic Medical ECG Animation (PQRST Waveform)
     startECG() {
         const path = document.querySelector('.ecg-path');
         if (!path) return;
-        
+
         let offset = 0;
         let lastBeat = 0;
-        let nextBeatInterval = 800 + Math.random() * 600;
-        
-        const generateSegment = (x, amplitude) => {
-            const baseline = 30;
-            if (amplitude > 0.7) {
-                // Strong heartbeat
-                return `L${x} ${baseline} L${x+5} ${baseline-25*amplitude} L${x+10} ${baseline+15*amplitude} L${x+15} ${baseline-8*amplitude} L${x+20} ${baseline}`;
-            } else if (amplitude > 0.3) {
-                // Medium beat
-                return `L${x} ${baseline} L${x+8} ${baseline-12*amplitude} L${x+16} ${baseline+8*amplitude} L${x+24} ${baseline}`;
-            } else {
-                // Flat
-                return `L${x} ${baseline} L${x+20} ${baseline}`;
-            }
+        let nextBeatInterval = 800 + Math.random() * 400;
+
+        // Realistic PQRST complex generator
+        const drawPQRST = (x, y, scale) => {
+            // P wave (atrial depolarization)
+            let d = `L${x} ${y} L${x+5} ${y-3*scale} L${x+10} ${y} `;
+            // PR segment
+            d += `L${x+15} ${y} `;
+            // QRS complex (ventricular depolarization)
+            d += `L${x+18} ${y+2*scale} L${x+22} ${y-25*scale} L${x+26} ${y+8*scale} L${x+30} ${y} `;
+            // ST segment
+            d += `L${x+40} ${y} `;
+            // T wave (ventricular repolarization)
+            d += `L${x+45} ${y-6*scale} L${x+55} ${y-10*scale} L${x+65} ${y} `;
+            // Baseline (TP segment)
+            d += `L${x+80} ${y} `;
+            return { d, nextX: x + 80 };
         };
-        
+
         const animate = (timestamp) => {
             if (!lastBeat) lastBeat = timestamp;
             const elapsed = timestamp - lastBeat;
-            
+
+            // Natural rhythm variation
             if (elapsed > nextBeatInterval) {
                 lastBeat = timestamp;
-                nextBeatInterval = 700 + Math.random() * 800;
+                nextBeatInterval = 700 + Math.random() * 600;
             }
-            
-            const beatProgress = elapsed / nextBeatInterval;
+
+            const phase = elapsed / nextBeatInterval;
             let amplitude = 0;
-            
-            if (beatProgress < 0.15) amplitude = 1 - (beatProgress / 0.15);
-            else if (beatProgress > 0.85) amplitude = (beatProgress - 0.85) / 0.15;
-            
-            // Occasionally add stronger beat
+
+            // Amplitude envelope — fades in/out around beat
+            if (phase < 0.15) amplitude = 1 - (phase / 0.15);
+            else if (phase > 0.85) amplitude = (phase - 0.85) / 0.15;
+
+            // Occasional stronger beat (natural variation)
             if (Math.random() < 0.02) amplitude = Math.max(amplitude, 0.8);
-            
-            offset = (offset + 0.5) % 400;
-            
-            let d = `M${-offset} 30`;
-            for (let x = 0; x <= 800; x += 20) {
-                const segAmplitude = amplitude * (0.5 + 0.5 * Math.sin((x + offset) * 0.01));
-                d += generateSegment(x - offset, segAmplitude);
+
+            // Move right-to-left
+            offset = (offset + 1) % 100;
+            const width = 800;
+            const baseline = 30;
+            let d = `M${-offset} ${baseline}`;
+            let curX = -offset;
+
+            while (curX < width + 100) {
+                const result = drawPQRST(curX, baseline, amplitude);
+                d += result.d;
+                curX = result.nextX;
             }
-            
+
             path.setAttribute('d', d);
             requestAnimationFrame(animate);
         };
-        
+
         requestAnimationFrame(animate);
     }
 
@@ -188,7 +231,6 @@ class LoveHub {
         const memoriesCount = document.getElementById('memoriesCount');
         if (memoriesCount) memoriesCount.textContent = `${LoveHubData.memories.length} photos`;
         
-        // Update avatars with saved images
         this.updateAvatars();
     }
 
@@ -240,7 +282,7 @@ class LoveHub {
 
         Object.keys(messagesByDate).sort().forEach(date => {
             const dateDiv = document.createElement('div');
-            dateDiv.className = 'chat-date-divider';
+            dateDiv.className = 'chat-date';
             dateDiv.innerHTML = `<span>${new Date(date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</span>`;
             conversation.appendChild(dateDiv);
 
@@ -261,6 +303,7 @@ class LoveHub {
         const sendMessage = () => {
             const text = chatInput.value.trim();
             if (!text) return;
+            
             const messages = storage.get('messages') || LoveHubData.messages;
             messages.push({
                 id: Date.now().toString(),
@@ -311,14 +354,13 @@ class LoveHub {
                 </div>
             `;
         }
+        
         document.getElementById('loveLetterContent').textContent = `"${LoveHubData.relationship.loveLetter}"`;
         document.getElementById('loveLetterFrom').textContent = `— ${LoveHubData.relationship.writtenBy}`;
-
+        
         const milestonesContainer = document.getElementById('loveMilestones');
         if (milestonesContainer) {
-            const existingTitle = milestonesContainer.querySelector('.section-title');
             milestonesContainer.innerHTML = '';
-            if (existingTitle) milestonesContainer.appendChild(existingTitle);
             LoveHubData.milestones.forEach(m => {
                 const item = document.createElement('div');
                 item.className = 'milestone-item glass-card';
@@ -332,6 +374,7 @@ class LoveHub {
         const gamesGrid = document.getElementById('gamesGrid');
         if (!gamesGrid) return;
         gamesGrid.innerHTML = '';
+        
         LoveHubData.games.forEach(game => {
             const card = document.createElement('div');
             card.className = 'game-card glass-card';
@@ -359,14 +402,15 @@ class LoveHub {
         const memoriesGrid = document.getElementById('memoriesGrid');
         if (!memoriesGrid) return;
         memoriesGrid.innerHTML = '';
+        
         LoveHubData.memories.forEach(memory => {
             const item = document.createElement('div');
-            item.className = 'memory-item';
+            item.className = 'mem-item';
             let bgStyle = memory.image ? 
                 `background-image: url('${memory.image}'); background-size: cover; background-position: center;` : 
                 `background: ${memory.gradient};`;
             const dateParts = memory.dateDisplay.split(' ');
-            item.innerHTML = `<div class="memory-thumb" style="${bgStyle}"><div class="memory-overlay"><span class="memory-date-tag">${dateParts[1]} ${dateParts[2]?.replace(',', '') || ''}</span></div></div>`;
+            item.innerHTML = `<div class="mem-thumb" style="${bgStyle}"><div class="mem-overlay"><span class="mem-date">${dateParts[1]} ${dateParts[2]?.replace(',', '') || ''}</span></div></div>`;
             item.addEventListener('click', () => this.openMemoryDetail(memory.id));
             memoriesGrid.appendChild(item);
         });
@@ -381,6 +425,7 @@ class LoveHub {
     openMemoryDetail(memoryId) {
         const memory = LoveHubData.memories.find(m => m.id === memoryId);
         if (!memory) return;
+        
         const modal = document.getElementById('memoryModal');
         const imgEl = document.getElementById('modalImage');
         if (imgEl) {
@@ -392,6 +437,7 @@ class LoveHub {
                 imgEl.style.background = memory.gradient;
             }
         }
+        
         document.getElementById('modalDate').textContent = memory.dateDisplay;
         document.querySelector('#modalLocation span').textContent = memory.location;
         document.querySelector('#modalMusic span').textContent = memory.music;
@@ -413,14 +459,16 @@ class LoveHub {
     }
 
     renderTimeline() {
-        const timelineContainer = document.getElementById('timelineContainer');
+        const timelineContainer = document.getElementById('timelineList');
         if (!timelineContainer) return;
         timelineContainer.innerHTML = '';
+        
         const timelineItems = [
             ...LoveHubData.memories.map(m => ({ date: m.date, dateDisplay: m.dateDisplay, title: m.location, desc: m.notes })),
             ...LoveHubData.milestones.map(m => ({ date: m.date, dateDisplay: m.dateDisplay, title: m.title, desc: '' }))
         ];
         timelineItems.sort((a, b) => new Date(b.date) - new Date(a.date));
+        
         timelineItems.forEach(item => {
             const el = document.createElement('div');
             el.className = 'timeline-item';
@@ -442,7 +490,6 @@ class LoveHub {
             avatarEl.textContent = (profile.firstName?.[0] || user.initial).toUpperCase();
             subtitleEl.textContent = `Together since 2023`;
             
-            // Load avatar image
             const avatarImg = userService.getAvatar(user.id);
             if (avatarImg) {
                 avatarEl.style.backgroundImage = `url(${avatarImg.data})`;
@@ -454,7 +501,6 @@ class LoveHub {
                 avatarEl.classList.remove('has-image');
             }
             
-            // Render personal info
             const personalInfoCard = document.getElementById('personalInfoCard');
             if (personalInfoCard) {
                 personalInfoCard.innerHTML = '';
@@ -474,7 +520,7 @@ class LoveHub {
                     if (profile[f.key]) {
                         const row = document.createElement('div');
                         row.className = 'info-row';
-                        row.innerHTML = `<span class="info-key">${f.label}</span><span class="info-value">${profile[f.key]}${f.suffix || ''}</span>`;
+                        row.innerHTML = `<span class="info-key">${f.label}</span><span class="info-val">${profile[f.key]}${f.suffix || ''}</span>`;
                         personalInfoCard.appendChild(row);
                     }
                 });
@@ -482,8 +528,6 @@ class LoveHub {
                     personalInfoCard.innerHTML = '<div class="info-row"><span class="info-key" style="width:100%;text-align:center;">No information yet. Tap Edit Profile to add.</span></div>';
                 }
             }
-            
-            // Render health
             this.renderHealth();
         } else {
             nameEl.textContent = 'POURYA';
@@ -497,6 +541,7 @@ class LoveHub {
         const healthGrid = document.getElementById('healthGrid');
         if (!healthGrid) return;
         healthGrid.innerHTML = '';
+        
         const healthData = healthService.getTodayData();
         const metrics = healthService.getMetrics().slice(0, 4);
         metrics.forEach(m => {
@@ -519,30 +564,29 @@ class LoveHub {
         const overlay = document.getElementById('loginOverlay');
         const cancelBtn = document.getElementById('loginCancel');
         const submitBtn = document.getElementById('loginSubmit');
-
+        
         loginBtn.addEventListener('click', () => overlay.classList.add('active'));
         cancelBtn.addEventListener('click', () => overlay.classList.remove('active'));
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
-
+        
         submitBtn.addEventListener('click', async () => {
-            const username = document.getElementById('loginUsername').value.trim();
-            const password = document.getElementById('loginPassword').value;
-
+            const username = document.getElementById('loginUser').value.trim();
+            const password = document.getElementById('loginPass').value;
+            
             if (!username || !password) {
                 this.showToast('Please enter credentials');
                 return;
             }
-
+            
             submitBtn.disabled = true;
             submitBtn.textContent = 'Logging in...';
             
             const result = authService.login(username, password);
-            
             if (result.success) {
                 this.currentUser = result.user;
                 overlay.classList.remove('active');
-                document.getElementById('loginUsername').value = '';
-                document.getElementById('loginPassword').value = '';
+                document.getElementById('loginUser').value = '';
+                document.getElementById('loginPass').value = '';
                 this.updateAuthUI();
                 this.renderProfile();
                 this.showToast('Login Successful ❤️');
@@ -553,7 +597,7 @@ class LoveHub {
             submitBtn.disabled = false;
             submitBtn.textContent = 'Login';
         });
-
+        
         logoutBtn.addEventListener('click', () => {
             if (confirm('Are you sure you want to logout?')) {
                 authService.logout();
@@ -580,7 +624,7 @@ class LoveHub {
         const closeBtn = document.getElementById('closeEditProfile');
         const saveBtn = document.getElementById('saveProfileBtn');
         const form = document.getElementById('editProfileForm');
-
+        
         const openEdit = () => {
             if (!this.currentUser) {
                 this.showToast('Please login first');
@@ -588,8 +632,8 @@ class LoveHub {
             }
             const profile = userService.getProfile(this.currentUser.id);
             const fields = userService.getAllFieldDefinitions();
-            
             form.innerHTML = '';
+            
             fields.forEach(f => {
                 const group = document.createElement('div');
                 group.className = 'form-group';
@@ -619,10 +663,9 @@ class LoveHub {
                 group.appendChild(input);
                 form.appendChild(group);
             });
-            
             modal.classList.add('active');
         };
-
+        
         if (editBtn) editBtn.addEventListener('click', openEdit);
         if (settingsEditBtn) settingsEditBtn.addEventListener('click', () => {
             document.getElementById('settingsOverlay').classList.remove('active');
@@ -630,7 +673,7 @@ class LoveHub {
         });
         if (closeBtn) closeBtn.addEventListener('click', () => modal.classList.remove('active'));
         modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('active'); });
-
+        
         saveBtn.addEventListener('click', () => {
             const inputs = form.querySelectorAll('[data-field]');
             const profileData = {};
@@ -645,14 +688,14 @@ class LoveHub {
                 this.showToast('Profile saved');
             }
         });
-
+        
         // Change password
         const changePasswordBtn = document.getElementById('changePasswordBtn');
         const settingsChangePasswordBtn = document.getElementById('settingsChangePasswordBtn');
         const passwordModal = document.getElementById('changePasswordModal');
         const closePasswordBtn = document.getElementById('closeChangePassword');
         const submitPasswordBtn = document.getElementById('submitChangePassword');
-
+        
         const openPassword = () => {
             if (!this.currentUser) return;
             document.getElementById('currentPassword').value = '';
@@ -660,7 +703,7 @@ class LoveHub {
             document.getElementById('confirmPassword').value = '';
             passwordModal.classList.add('active');
         };
-
+        
         if (changePasswordBtn) changePasswordBtn.addEventListener('click', openPassword);
         if (settingsChangePasswordBtn) settingsChangePasswordBtn.addEventListener('click', () => {
             document.getElementById('settingsOverlay').classList.remove('active');
@@ -668,7 +711,7 @@ class LoveHub {
         });
         if (closePasswordBtn) closePasswordBtn.addEventListener('click', () => passwordModal.classList.remove('active'));
         passwordModal.addEventListener('click', (e) => { if (e.target === passwordModal) passwordModal.classList.remove('active'); });
-
+        
         submitPasswordBtn.addEventListener('click', () => {
             const current = document.getElementById('currentPassword').value;
             const newPass = document.getElementById('newPassword').value;
@@ -704,7 +747,7 @@ class LoveHub {
         const uploadArea = document.getElementById('avatarUploadArea');
         const fileInput = document.getElementById('avatarFileInput');
         const removeBtn = document.getElementById('removeAvatarBtn');
-
+        
         if (avatarEditBtn) avatarEditBtn.addEventListener('click', () => {
             if (!this.currentUser) {
                 this.showToast('Please login first');
@@ -714,16 +757,14 @@ class LoveHub {
         });
         if (closeBtn) closeBtn.addEventListener('click', () => modal.classList.remove('active'));
         modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('active'); });
-
+        
         if (uploadArea) uploadArea.addEventListener('click', () => fileInput.click());
         
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
-            
             const reader = new FileReader();
             reader.onload = (event) => {
-                // Simple crop: use as-is (full implementation would use canvas)
                 userService.saveAvatar(this.currentUser.id, event.target.result);
                 modal.classList.remove('active');
                 this.renderProfile();
@@ -733,7 +774,7 @@ class LoveHub {
             reader.readAsDataURL(file);
             fileInput.value = '';
         });
-
+        
         if (removeBtn) removeBtn.addEventListener('click', () => {
             if (!this.currentUser) return;
             userService.removeAvatar(this.currentUser.id);
@@ -748,7 +789,7 @@ class LoveHub {
         const settingsBtn = document.getElementById('settingsBtn');
         const overlay = document.getElementById('settingsOverlay');
         const closeBtn = document.getElementById('settingsClose');
-
+        
         settingsBtn.addEventListener('click', () => overlay.classList.add('active'));
         closeBtn.addEventListener('click', () => overlay.classList.remove('active'));
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
@@ -759,7 +800,7 @@ class LoveHub {
         const importBtn = document.getElementById('importDataBtn');
         const resetBtn = document.getElementById('resetDataBtn');
         const importFileInput = document.getElementById('importFileInput');
-
+        
         if (exportBtn) exportBtn.addEventListener('click', () => {
             const data = storage.exportAll();
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -771,7 +812,7 @@ class LoveHub {
             URL.revokeObjectURL(url);
             this.showToast('Data exported');
         });
-
+        
         if (importBtn) importBtn.addEventListener('click', () => importFileInput.click());
         
         importFileInput.addEventListener('change', (e) => {
@@ -791,7 +832,7 @@ class LoveHub {
             reader.readAsText(file);
             importFileInput.value = '';
         });
-
+        
         if (resetBtn) resetBtn.addEventListener('click', () => {
             if (confirm('This will delete all your data. Are you sure?')) {
                 storage.clear();
@@ -802,29 +843,43 @@ class LoveHub {
     }
 
     setupInteractions() {
-        document.querySelectorAll('.glass-card').forEach(card => {
-            card.addEventListener('touchstart', () => card.style.transform = 'scale(0.97)');
-            card.addEventListener('touchend', () => setTimeout(() => card.style.transform = '', 100));
+        // Spring-based card press
+        document.querySelectorAll('.glass-card, .glass').forEach(card => {
+            card.addEventListener('touchstart', () => {
+                card.style.transform = 'scale(0.97)';
+            }, { passive: true });
+            card.addEventListener('touchend', () => {
+                setTimeout(() => {
+                    card.style.transform = '';
+                }, 100);
+            }, { passive: true });
         });
+
+        // Prevent double-tap zoom
         let lastTouchEnd = 0;
         document.addEventListener('touchend', (e) => {
             const now = Date.now();
             if (now - lastTouchEnd <= 300) e.preventDefault();
             lastTouchEnd = now;
-        }, false);
+        }, { passive: false });
     }
 
     showToast(message, duration = 3000) {
         const container = document.getElementById('toastContainer');
         if (!container) return;
+        
         const toast = document.createElement('div');
         toast.className = 'toast';
         toast.textContent = message;
         container.appendChild(toast);
+        
         requestAnimationFrame(() => toast.classList.add('show'));
+        
         setTimeout(() => {
             toast.classList.remove('show');
-            setTimeout(() => { if (container.contains(toast)) container.removeChild(toast); }, 400);
+            setTimeout(() => { 
+                if (container.contains(toast)) container.removeChild(toast); 
+            }, 400);
         }, duration);
     }
 
