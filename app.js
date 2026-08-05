@@ -2,15 +2,25 @@ class LoveHub {
     constructor() {
         this.currentPage = 'home';
         this.currentUser = null;
+        this.currentProfile = null;
+        this.currentCouple = null;
+        this.onboardingDismissed = false;
+        this._authStateBusy = false;
+        this._authStateQueued = false;
+        this._authStateGeneration = 0;
         this.init();
     }
 
     async init() {
         try {
-            // Check existing session — prefer a real Supabase session, fall
-            // back to the legacy local session so nothing breaks mid-migration.
-            this.currentUser = authService.getCurrentUser();
-            await this.loadAccountState();
+            // Supabase is authoritative whenever configured. Only a genuinely
+            // absent backend may restore the legacy demo session.
+            if (window.LoveHubAuth?.isReady()) {
+                await window.LoveHubAuth.initialize();
+                await this.loadAccountState();
+            } else if (window.LoveHubInit?.status === 'missing-config') {
+                this.currentUser = authService.getCurrentUser();
+            }
             this.setupSplash();
             this.setupTheme();
             this.setupNavigation();
@@ -27,41 +37,86 @@ class LoveHub {
             this.renderAll();
             
             // If logged in, show logged-in UI
-            if (this.currentUser) {
-                this.updateAuthUI();
-                // Phase 2: route new users into profile/couple onboarding.
-                if (window.LoveHubPendingRecovery) {
-                    // A password-recovery link opened the app before boot finished.
-                    window.LoveHubPendingRecovery = false;
-                    this.openRecovery();
-                } else {
-                    this.checkOnboarding();
-                }
+            this.updateAuthUI();
+            if (window.LoveHubMarkAppReady) window.LoveHubMarkAppReady(this);
+            if (window.LoveHubPendingRecovery) {
+                window.LoveHubPendingRecovery = false;
+                this.openRecovery();
+            } else if (this.currentUser) {
+                this.checkOnboarding();
             }
         } catch (error) {
             console.error('Init error:', error);
+            this.updateAuthUI();
         }
     }
 
-    // Called by the auth-state listener (src/main.js) when a Supabase session
-    // appears — e.g. right after the user clicks the email-confirmation link.
-    async refreshAuthFromSupabase() {
-        if (!window.LoveHubAuth?.isReady()) return;
+    // Single entry point for all Supabase auth events. It serializes refreshes
+    // so INITIAL_SESSION/SIGNED_IN cannot overwrite each other out of order.
+    async handleSignedIn(session) {
+        if (!window.LoveHubAuth?.isReady() || !session?.user) return;
+        if (this._authStateBusy) {
+            this._authStateQueued = true;
+            return;
+        }
+        this._authStateBusy = true;
+        const generation = this._authStateGeneration;
         const hadUser = !!this.currentUser;
-        await this.loadAccountState();
-        if (!this.currentUser) return;
+        try {
+            window.LoveHubAuth.setSession(session);
+            await this.loadAccountState(session.user);
+            // A slow profile/couple request must never restore a user after a
+            // SIGNED_OUT event has already cleared the shell.
+            if (generation !== this._authStateGeneration || !window.LoveHubAuth.session?.user) return;
+            this.updateAuthUI();
+            this.renderAll();
+            if (!hadUser) this.showToast('Welcome back ❤️');
+            this.onboardingDismissed = false;
+            this.checkOnboarding();
+        } finally {
+            this._authStateBusy = false;
+            if (this._authStateQueued) {
+                this._authStateQueued = false;
+                await this.handleSignedIn(window.LoveHubAuth.session);
+            }
+        }
+    }
+
+    async refreshAuthFromSupabase() {
+        return this.handleSignedIn(window.LoveHubAuth?.session);
+    }
+
+    handleSignedOut() {
+        // Invalidate any async account load that is still awaiting Supabase.
+        this._authStateGeneration += 1;
+        const hadState = !!(this.currentUser || this.currentProfile || this.currentCouple);
+        this.currentUser = null;
+        this.currentProfile = null;
+        this.currentCouple = null;
+        this.onboardingDismissed = false;
+        authService.logout();
+        window.LoveHubAuth?.setSession(null);
+        window.LoveHubOnboarding?.close();
+        // Never leave a protected page visible after the session ends.
+        if (this.currentPage !== 'home') this.navigateTo('home');
+        if (!hadState) {
+            this.updateAuthUI();
+            return;
+        }
         this.updateAuthUI();
-        this.renderProfile();
-        this.renderHome();
-        if (!hadUser) this.showToast('Welcome back ❤️');
-        if (this.isRealUser()) this.checkOnboarding();
+        this.renderAll();
     }
 
     // Phase 2: load the real account state (Supabase user + profile + couple).
-    async loadAccountState() {
+    async loadAccountState(sbUser = null) {
         if (!window.LoveHubAuth?.isReady()) return;
-        const sbUser = await window.LoveHubAuth.getUser();
-        if (!sbUser) return;
+        sbUser = sbUser || await window.LoveHubAuth.getUser();
+        if (!sbUser) {
+            this.currentUser = null;
+            this.currentProfile = null;
+            this.currentCouple = null;
+            return;
+        }
         let profile = await window.LoveHubProfile.getProfile(sbUser.id);
         if (!profile) {
             profile = await window.LoveHubProfile.ensureProfile(sbUser.id, {
@@ -186,15 +241,14 @@ class LoveHub {
             return;
         }
 
+        const signOutResult = await window.LoveHubAuth.signOut();
+        if (!signOutResult.success) {
+            this.showToast(`Password updated, but logout failed: ${signOutResult.error || 'please reload'}`);
+            return;
+        }
         this.showToast('Password updated — log in with your new password');
         this.closeRecovery();
-        await window.LoveHubAuth.signOut();
-        this.currentUser = null;
-        this.currentProfile = null;
-        this.currentCouple = null;
-        this.updateAuthUI();
-        this.renderProfile();
-        this.renderHome();
+        this.handleSignedOut();
 
         // Back to the login sheet, forced to login mode.
         const overlay = document.getElementById('loginOverlay');
@@ -257,6 +311,12 @@ class LoveHub {
     }
 
     navigateTo(pageName) {
+        if (!this.currentUser && pageName !== 'home') {
+            this.showToast('Please login to open this page');
+            const loginOverlay = document.getElementById('loginOverlay');
+            if (loginOverlay) loginOverlay.classList.add('active');
+            return;
+        }
         if (this.currentPage === pageName) return;
 
         // Update tabs immediately
@@ -384,14 +444,18 @@ class LoveHub {
         }
 
         // Real users: days come from the confirmed couple start date, never a
-        // hardcoded demo date. Demo users keep the legacy experience.
+        // hardcoded demo date. Seeded data is limited to the explicit demo
+        // account; signed-out users see an empty state.
         const real = this.isRealUser();
+        const demo = this.isDemoUser();
         const days = real
             ? this.getDaysTogether()
-            : Math.ceil(Math.abs(new Date() - new Date('2023-01-01')) / (1000 * 60 * 60 * 24));
+            : demo
+                ? Math.ceil(Math.abs(new Date() - new Date('2023-01-01')) / (1000 * 60 * 60 * 24))
+                : 0;
         this.animateValue('daysCounter', 0, days, 1500);
 
-        const latestMemory = real ? null : LoveHubData.memories[0];
+        const latestMemory = demo ? LoveHubData.memories[0] : null;
         if (latestMemory) {
             const imgEl = document.getElementById('latestMemoryImage');
             if (imgEl) {
@@ -413,17 +477,26 @@ class LoveHub {
             const imgEl = document.getElementById('latestMemoryImage');
             if (imgEl) imgEl.style.background = 'linear-gradient(135deg, rgba(255,63,95,0.12), rgba(94,92,230,0.12))';
             const dateEl = document.getElementById('latestMemoryDate');
-            if (dateEl) dateEl.textContent = real ? 'Your story starts here' : 'Loading...';
+            if (dateEl) dateEl.textContent = demo ? 'Your story starts here' : 'Log in to start your story';
             const locationEl = document.getElementById('latestMemoryLocation');
             if (locationEl) locationEl.textContent = '';
             const quoteEl = document.getElementById('latestMemoryQuote');
             if (quoteEl) quoteEl.textContent = real
                 ? (this.currentCouple?.status === 'active' ? 'No memories yet — coming soon' : 'Finish your profile and find your partner')
-                : 'Loading memory...';
+                : 'Your private memories will appear here';
         }
 
         const memoriesCount = document.getElementById('memoriesCount');
-        if (memoriesCount) memoriesCount.textContent = real ? '0 photos' : `${LoveHubData.memories.length} photos`;
+        if (memoriesCount) memoriesCount.textContent = demo ? `${LoveHubData.memories.length} photos` : '0 photos';
+
+        const relationshipStatus = document.getElementById('relationshipStatus');
+        if (relationshipStatus) {
+            relationshipStatus.textContent = demo
+                ? 'In a relationship'
+                : this.currentCouple?.status === 'active'
+                    ? 'In a relationship'
+                    : this.currentUser ? 'Find your partner' : 'Log in to begin';
+        }
 
         this.updateAvatars();
     }
@@ -436,6 +509,12 @@ class LoveHub {
         if (this.isRealUser()) {
             this.applyAvatar(avatarP, this.currentUser?.id, this.currentUser?.initial);
             this.applyAvatar(avatarS, this.currentCouple?.partner?.id, this.currentCouple?.partner?.display_name?.[0]?.toUpperCase());
+            return;
+        }
+
+        if (!this.isDemoUser()) {
+            this.applyAvatar(avatarP, null, this.currentUser ? this.currentUser.initial : '?');
+            this.applyAvatar(avatarS, null, '?');
             return;
         }
 
@@ -489,9 +568,9 @@ class LoveHub {
         if (!conversation) return;
         conversation.innerHTML = '';
 
-        // Real users: no fake conversation. Chat ships in a later phase.
-        if (this.isRealUser()) {
-            conversation.innerHTML = '<div class="chat-empty" style="text-align:center;color:var(--text-secondary);padding:60px 24px;font-size:15px;line-height:1.7">Your private couple chat<br>will live here — coming soon.</div>';
+        // Only the explicit legacy demo session may show seeded conversation.
+        if (!this.isDemoUser()) {
+            conversation.innerHTML = `<div class="chat-empty" style="text-align:center;color:var(--text-secondary);padding:60px 24px;font-size:15px;line-height:1.7">${this.currentUser ? 'Your private couple chat<br>will live here — coming soon.' : 'Log in to open your private couple chat.'}</div>`;
             conversation.scrollTop = 0;
             return;
         }
@@ -525,6 +604,10 @@ class LoveHub {
         const chatInput = document.getElementById('chatInput');
         
         const sendMessage = () => {
+            if (!this.isDemoUser()) {
+                this.showToast(this.currentUser ? 'Private couple chat is coming soon.' : 'Please login to chat.');
+                return;
+            }
             const text = chatInput.value.trim();
             if (!text) return;
             
@@ -547,6 +630,9 @@ class LoveHub {
     }
 
     simulateReply() {
+        // A delayed demo reply must not write after logout or run for real
+        // accounts whose chat is not backed by Supabase yet.
+        if (!this.isDemoUser()) return;
         const replies = ['Miss you too!', 'Can\'t wait!', 'Love you', 'See you soon!'];
         const messages = storage.get('messages') || [];
         messages.push({
@@ -563,7 +649,7 @@ class LoveHub {
     renderLove() {
         const loveStats = document.getElementById('loveStats');
         if (loveStats) {
-            if (this.isRealUser()) {
+            if (!this.isDemoUser()) {
                 const days = this.getDaysTogether();
                 loveStats.innerHTML = `
                     <div class="love-stat-card glass-card">
@@ -598,8 +684,8 @@ class LoveHub {
         const letterEl = document.getElementById('loveLetterContent');
         const fromEl = document.getElementById('loveLetterFrom');
         const milestonesContainer = document.getElementById('loveMilestones');
-        if (this.isRealUser()) {
-            if (letterEl) letterEl.textContent = '"Write your first love letter here soon."';
+        if (!this.isDemoUser()) {
+            if (letterEl) letterEl.textContent = this.currentUser ? '"Write your first love letter here soon."' : 'Log in to write your first love letter.';
             if (fromEl) fromEl.textContent = '';
             if (milestonesContainer) {
                 milestonesContainer.innerHTML = '<div class="glass-card" style="padding:20px;text-align:center;color:var(--text-secondary)">Milestones will appear here</div>';
@@ -625,7 +711,7 @@ class LoveHub {
         const gamesGrid = document.getElementById('gamesGrid');
         if (!gamesGrid) return;
         gamesGrid.innerHTML = '';
-        const real = this.isRealUser();
+        const demo = this.isDemoUser();
         
         LoveHubData.games.forEach(game => {
             const card = document.createElement('div');
@@ -636,11 +722,11 @@ class LoveHub {
                     <div class="game-title">${game.name}</div>
                     <div class="game-desc">${game.description}</div>
                     <div class="game-meta">
-                        ${real
-                            ? '<span class="game-rating">Play together — coming soon</span>'
-                            : `<span class="game-rating">★ ${game.rating}</span><span class="game-wins"> ${game.wins} wins</span>`}
+                        ${demo
+                            ? `<span class="game-rating">★ ${game.rating}</span><span class="game-wins"> ${game.wins} wins</span>`
+                            : '<span class="game-rating">Play together — coming soon</span>'}
                     </div>
-                    ${real ? '' : `<div class="game-last">Last played: ${game.lastPlayed}</div>`}
+                    ${demo ? `<div class="game-last">Last played: ${game.lastPlayed}</div>` : ''}
                 </div>
                 <button class="play-btn" data-game-id="${game.id}">▶ Play</button>
             `;
@@ -655,8 +741,8 @@ class LoveHub {
         const memoriesGrid = document.getElementById('memoriesGrid');
         if (!memoriesGrid) return;
         memoriesGrid.innerHTML = '';
-        if (this.isRealUser()) {
-            memoriesGrid.innerHTML = '<div class="glass-card" style="grid-column:1/-1;padding:26px;text-align:center;color:var(--text-secondary);font-size:14px;line-height:1.7">No memories yet.<br>Your shared photo memories will live here.</div>';
+        if (!this.isDemoUser()) {
+            memoriesGrid.innerHTML = `<div class="glass-card" style="grid-column:1/-1;padding:26px;text-align:center;color:var(--text-secondary);font-size:14px;line-height:1.7">${this.currentUser ? 'No memories yet.<br>Your shared photo memories will live here.' : 'Log in to create private memories.'}</div>`;
             return;
         }
         
@@ -718,8 +804,8 @@ class LoveHub {
     renderTimeline() {
         const timelineContainer = document.getElementById('timelineList');
         if (!timelineContainer) return;
-        if (this.isRealUser()) {
-            timelineContainer.innerHTML = '<div class="glass-card" style="padding:26px;text-align:center;color:var(--text-secondary);font-size:14px">Your timeline will grow here as you create memories together.</div>';
+        if (!this.isDemoUser()) {
+            timelineContainer.innerHTML = `<div class="glass-card" style="padding:26px;text-align:center;color:var(--text-secondary);font-size:14px">${this.currentUser ? 'Your timeline will grow here as you create memories together.' : 'Log in to view your private timeline.'}</div>`;
             return;
         }
         timelineContainer.innerHTML = '';
@@ -921,9 +1007,9 @@ class LoveHub {
         if (!healthGrid) return;
         healthGrid.innerHTML = '';
 
-        // Real users: no randomly generated mock metrics.
-        if (this.isRealUser()) {
-            healthGrid.innerHTML = '<div class="glass-card" style="grid-column:1/-1;padding:22px;text-align:center;color:var(--text-secondary);font-size:14px">Health data will appear here</div>';
+        // Only the explicit legacy demo session may show seeded metrics.
+        if (!this.isDemoUser()) {
+            healthGrid.innerHTML = `<div class="glass-card" style="grid-column:1/-1;padding:22px;text-align:center;color:var(--text-secondary);font-size:14px">${this.currentUser ? 'Health data will appear here' : 'Log in to view your private health data.'}</div>`;
             return;
         }
         
@@ -1089,9 +1175,8 @@ class LoveHub {
                     result = { success: false, error: this.getBackendMessage() || 'Backend unavailable' };
                 }
             } else {
-                // Real Supabase login (by username -> remembered email).
+                    // Real Supabase login (by username/email).
                 if (window.LoveHubAuth?.isReady()) {
-                    if (window.LoveHubAuth.hasEmailFor(username)) {
                         const sbResult = await window.LoveHubAuth.signInWithUsername(username, password);
                         if (sbResult.success) {
                             const profile = await window.LoveHubProfile.getProfile(sbResult.user.id);
@@ -1101,7 +1186,6 @@ class LoveHub {
                             // never silently land on a demo account with the same name.
                             result = { success: false, error: sbResult.error };
                         }
-                    }
                 } else if (window.LoveHubInit?.status === 'missing-config') {
                     // Supabase genuinely absent — demo fallback is allowed.
                     result = authService.login(username, password);
@@ -1109,7 +1193,7 @@ class LoveHub {
                     // Configured but broken — show the real reason, never a fake demo success.
                     result = { success: false, error: this.getBackendMessage() || 'Backend unavailable' };
                 }
-                if (!result) {
+                if (!result && window.LoveHubInit?.status === 'missing-config') {
                     result = authService.login(username, password);
                 }
             }
@@ -1139,16 +1223,16 @@ class LoveHub {
 
         logoutBtn.addEventListener('click', async () => {
             if (confirm('Are you sure you want to logout?')) {
-                if (window.LoveHubAuth?.isReady()) await window.LoveHubAuth.signOut();
-                authService.logout();
-                this.currentUser = null;
-                this.currentProfile = null;
-                this.currentCouple = null;
-                this.onboardingDismissed = false;
-                if (window.LoveHubOnboarding) window.LoveHubOnboarding.close();
-                this.updateAuthUI();
-                this.renderProfile();
-                this.renderHome();
+                if (window.LoveHubAuth?.isReady()) {
+                    const result = await window.LoveHubAuth.signOut();
+                    if (!result.success) {
+                        this.showToast(result.error || 'Could not log out');
+                        return;
+                    }
+                } else if (window.LoveHubInit?.status === 'missing-config') {
+                    authService.logout();
+                }
+                this.handleSignedOut();
                 this.showToast('Logged out successfully');
             }
         });

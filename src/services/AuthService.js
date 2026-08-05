@@ -1,15 +1,6 @@
 // src/services/AuthService.js
-// Real Supabase Auth (Phase 1). Replaces the fake username@lovehub.local emails.
-//
-// Hybrid login design (approved):
-//   - Signup collects a real email (email confirmation works).
-//   - Sign-in stays username + password: we remember the username->email
-//     mapping in localStorage (lovehub_usernameEmails) at signup time.
-//   - Usernames that are NOT Supabase accounts fall through to the legacy
-//     demo accounts (Pourya/Sarina) in app.js.
-//
-// Session persistence is handled natively by supabase-js (persistSession),
-// so a signed-in user stays signed in across reloads.
+// Real Supabase Auth for LoveHub. The legacy AuthService remains available
+// only for the explicit no-backend demo mode handled by app.js.
 
 import { supabaseClient, isSupabaseReady, getInitStatus } from './SupabaseClient.js';
 
@@ -19,13 +10,13 @@ export class AuthService {
     constructor() {
         this.session = null;
         this._unsubscribe = null;
+        this._initializePromise = null;
     }
 
     isReady() {
         return isSupabaseReady();
     }
 
-    // Why is the backend unavailable? { status: 'ok'|'missing-config'|'missing-sdk'|'init-error', reason }
     getInitStatus() {
         return getInitStatus();
     }
@@ -42,127 +33,186 @@ export class AuthService {
     }
 
     rememberEmail(username, email) {
+        const key = (username || '').toLowerCase().trim();
+        const value = (email || '').toLowerCase().trim();
+        if (!key || !value) return;
         const map = storage.get(EMAIL_MAP_KEY) || {};
-        map[(username || '').toLowerCase().trim()] = (email || '').toLowerCase().trim();
+        map[key] = value;
         storage.set(EMAIL_MAP_KEY, map);
     }
 
-    // ---------------- session ----------------
+    // ---------------- session lifecycle ----------------
 
     setSession(session) {
-        this.session = session;
+        this.session = session || null;
     }
 
-    // True when the current session is a real Supabase user (legacy demo
-    // accounts use the ids 'user1'/'user2').
+    // Supabase is the source of truth whenever it is configured. The legacy
+    // demo IDs are intentionally not treated as Supabase sessions.
     isSupabaseUser() {
-        const user = this.session?.user;
-        if (!user) return false;
-        return user.id !== 'user1' && user.id !== 'user2';
+        return !!this.session?.user && this.session.user.id !== 'user1' && this.session.user.id !== 'user2';
+    }
+
+    // One shared boot promise prevents app.js and main.js from racing to read
+    // the persisted session independently.
+    initialize() {
+        if (!this.isReady()) return Promise.resolve(null);
+        if (!this._initializePromise) {
+            this._initializePromise = this.getSession();
+        }
+        return this._initializePromise;
     }
 
     async getUser() {
         if (!this.isReady()) return null;
-        const { data } = await supabaseClient.auth.getUser();
-        return data?.user || null;
+        try {
+            const { data, error } = await supabaseClient.auth.getUser();
+            if (error) {
+                console.warn('[LoveHubAuth] getUser failed:', error.message);
+                return null;
+            }
+            return data?.user || null;
+        } catch (error) {
+            console.warn('[LoveHubAuth] getUser failed:', error);
+            return null;
+        }
     }
 
     async getSession() {
         if (!this.isReady()) return null;
-        const { data } = await supabaseClient.auth.getSession();
-        this.session = data.session;
-        return data.session;
+        try {
+            const { data, error } = await supabaseClient.auth.getSession();
+            if (error) {
+                console.warn('[LoveHubAuth] getSession failed:', error.message);
+                this.session = null;
+                return null;
+            }
+            this.session = data?.session || null;
+            return this.session;
+        } catch (error) {
+            console.warn('[LoveHubAuth] getSession failed:', error);
+            this.session = null;
+            return null;
+        }
     }
 
-    // Called once at boot. Fires on SIGNED_IN (incl. returning from an email
-    // confirmation / recovery link), TOKEN_REFRESHED, SIGNED_OUT, etc.
+    // Install exactly one listener for the lifetime of the app. Returning the
+    // same cleanup function makes accidental repeated setup harmless.
     onAuthStateChange(callback) {
         if (!this.isReady()) return () => {};
+        if (this._unsubscribe) return this._unsubscribe;
+
         const { data } = supabaseClient.auth.onAuthStateChange((event, session) => {
-            this.session = session;
-            callback(event, session);
+            this.session = session || null;
+            callback(event, session || null);
         });
-        return () => data.subscription.unsubscribe();
+        const subscription = data?.subscription;
+        const unsubscribe = () => {
+            subscription?.unsubscribe();
+            if (this._unsubscribe === unsubscribe) this._unsubscribe = null;
+        };
+        this._unsubscribe = unsubscribe;
+        return unsubscribe;
     }
 
     // ---------------- auth actions ----------------
 
-    // Sign up with a REAL email. options.data carries the username +
-    // display_name that the DB trigger (handle_new_user) uses to auto-create
-    // the profile row.
     async signUp({ email, password, username, displayName }) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
 
-        const { data, error } = await supabaseClient.auth.signUp({
-            email,
-            password,
-            options: {
-                data: { username: (username || '').toLowerCase().trim(), display_name: displayName },
-                emailRedirectTo: `${location.origin}${location.pathname}`
-            }
-        });
-        if (error) return { success: false, error: error.message };
+        try {
+            const { data, error } = await supabaseClient.auth.signUp({
+                email: email.trim().toLowerCase(),
+                password,
+                options: {
+                    data: {
+                        username: (username || '').toLowerCase().trim(),
+                        display_name: displayName
+                    },
+                    emailRedirectTo: `${location.origin}${location.pathname}`
+                }
+            });
+            if (error) return { success: false, error: error.message };
 
-        this.rememberEmail(username, email);
-
-        // No session returned -> Supabase is enforcing email confirmation.
-        const needsEmailConfirmation = !data.session;
-        return {
-            success: true,
-            needsEmailConfirmation,
-            user: data.session
-                ? { id: data.user.id, username, name: displayName || username, initial: (displayName || username || '?')[0]?.toUpperCase() }
-                : null,
-            rawUser: data.user
-        };
+            this.session = data?.session || null;
+            this.rememberEmail(username, email);
+            return {
+                success: true,
+                needsEmailConfirmation: !data?.session,
+                user: data?.session && data?.user
+                    ? {
+                        id: data.user.id,
+                        username,
+                        name: displayName || username,
+                        initial: (displayName || username || '?')[0]?.toUpperCase()
+                    }
+                    : null,
+                rawUser: data?.user || null
+            };
+        } catch (error) {
+            return { success: false, error: error.message || String(error) };
+        }
     }
 
-    // Sign in with the username the user typed. Only works for usernames that
-    // signed up through this app (we remember the email). Anything else is
-    // signalled with fallbackToDemo so app.js can try the legacy accounts.
-    async signInWithUsername(username, password) {
-        const email = this.getEmailFor(username);
-        if (!email) return { success: false, error: 'Unknown username', fallbackToDemo: true };
-        if (!this.isReady()) return { success: false, error: 'Backend not configured', fallbackToDemo: true };
+    // The UI keeps username login. On another device, an email may also be
+    // entered directly; this avoids making the local username map a security
+    // or availability dependency for a real Supabase account.
+    async signInWithUsername(identifier, password) {
+        const value = (identifier || '').trim();
+        const email = value.includes('@') ? value.toLowerCase() : this.getEmailFor(value);
+        if (!email) return { success: false, error: 'No account found for that username.' };
+        if (!this.isReady()) return { success: false, error: 'Backend not configured' };
 
-        const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-        if (error) {
-            if (/not confirmed/i.test(error.message)) {
-                return {
-                    success: false,
-                    needsConfirmation: true,
-                    error: 'Please confirm your email before logging in (check your inbox).'
-                };
+        try {
+            const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+            if (error) {
+                if (/not confirmed/i.test(error.message)) {
+                    return {
+                        success: false,
+                        needsConfirmation: true,
+                        error: 'Please confirm your email before logging in (check your inbox).'
+                    };
+                }
+                return { success: false, error: error.message };
             }
-            return { success: false, error: error.message };
+            this.session = data?.session || null;
+            return { success: true, session: this.session, user: data?.user || null };
+        } catch (error) {
+            return { success: false, error: error.message || String(error) };
         }
-
-        this.session = data.session;
-        return { success: true, session: data.session, user: data.user };
     }
 
     async signOut() {
         if (!this.isReady()) return { success: true };
-        const { error } = await supabaseClient.auth.signOut();
-        this.session = null;
-        return { success: !error, error: error?.message };
+        try {
+            const { error } = await supabaseClient.auth.signOut();
+            if (error) return { success: false, error: error.message };
+            this.session = null;
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message || String(error) };
+        }
     }
 
-    // Password reset preparation — sends the recovery email. The user clicks
-    // the link, lands back on the app (detectSessionInUrl), and can set a new
-    // password via updatePassword().
     async resetPasswordForEmail(email) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
-        const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
-            redirectTo: `${location.origin}${location.pathname}`
-        });
-        return { success: !error, error: error?.message };
+        try {
+            const { error } = await supabaseClient.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+                redirectTo: `${location.origin}${location.pathname}`
+            });
+            return { success: !error, error: error?.message };
+        } catch (error) {
+            return { success: false, error: error.message || String(error) };
+        }
     }
 
-    // Set a new password for the signed-in Supabase user.
     async updatePassword(newPassword) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
-        const { error } = await supabaseClient.auth.updateUser({ password: newPassword });
-        return { success: !error, error: error?.message };
+        try {
+            const { error } = await supabaseClient.auth.updateUser({ password: newPassword });
+            return { success: !error, error: error?.message };
+        } catch (error) {
+            return { success: false, error: error.message || String(error) };
+        }
     }
 }
