@@ -310,6 +310,10 @@
     </div>
 
     <script src="icons.js"></script>
+    <!-- Supabase backend (Phase 1) — safe to load even before config.js exists -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <script src="supabase/config.js" onerror="console.warn('supabase/config.js not found — copy supabase/config.example.js to supabase/config.js and fill in your keys')"></script>
+    <script src="services/SupabaseService.js"></script>
     <script src="services/StorageService.js"></script>
     <script src="services/AuthService.js"></script>
     <script src="services/UserService.js"></script>
