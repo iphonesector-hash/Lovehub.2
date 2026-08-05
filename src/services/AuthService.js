@@ -11,7 +11,7 @@
 // Session persistence is handled natively by supabase-js (persistSession),
 // so a signed-in user stays signed in across reloads.
 
-import { supabaseClient, isSupabaseReady } from './SupabaseClient.js';
+import { supabaseClient, isSupabaseReady, getInitStatus } from './SupabaseClient.js';
 
 const EMAIL_MAP_KEY = 'usernameEmails';
 
@@ -23,6 +23,11 @@ export class AuthService {
 
     isReady() {
         return isSupabaseReady();
+    }
+
+    // Why is the backend unavailable? { status: 'ok'|'missing-config'|'missing-sdk'|'init-error', reason }
+    getInitStatus() {
+        return getInitStatus();
     }
 
     // ---------------- username <-> email map ----------------
