@@ -256,6 +256,7 @@ body::before {
 .login-field { padding: 13px 15px; border-radius: 13px; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border); color: #fff; font-size: 15px; outline: none; -webkit-user-select: text; user-select: text; }
 .login-submit { padding: 13px; border-radius: 13px; background: linear-gradient(135deg, var(--love-accent), var(--luxury-accent)); border: none; color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; width: 100%; box-shadow: 0 4px 14px rgba(255, 55, 95, 0.3); }
 .login-cancel { width: 100%; padding: 13px; border-radius: 13px; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+.login-switch-mode { width: 100%; padding: 10px; background: transparent; border: none; color: var(--accent, #ff5c7a); font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 6px; }
 .settings-content { display: flex; flex-direction: column; gap: 20px; margin-bottom: 20px; }
 .settings-section { display: flex; flex-direction: column; gap: 12px; }
 .theme-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
