@@ -1,13 +1,22 @@
 // src/services/ProfileService.js
-// Supabase-backed profiles (Phase 1). Mirrors the public.profiles table:
-// id, username, display_name, avatar_url, bio, level, xp, coins, language,
-// status, created_at, updated_at.
+// Supabase-backed profiles (Phase 1 + Phase 2 personal fields).
+// Mirrors public.profiles: id, username, display_name, avatar_url, bio,
+// date_of_birth, height, weight, gender, city, country, occupation,
+// onboarding_completed, level, xp, coins, language, status, timestamps.
 //
-// The DB trigger (handle_new_user in supabase/schema.sql) auto-creates the
-// profile row on signup; ensureProfile() is a defensive fallback so the app
-// still works if that trigger was never installed.
+// Phase 2 privacy: full rows are only readable by the owner and confirmed
+// couple partners (RLS). Other users' public info comes via profiles_public.
 
 import { supabaseClient, isSupabaseReady } from './SupabaseClient.js';
+
+// Columns the app may write from the client. RLS lets owners update their
+// whole row, but we never touch protected/system columns (id, username...).
+const WRITABLE = [
+    'display_name', 'avatar_url', 'bio',
+    'date_of_birth', 'height', 'weight', 'gender',
+    'city', 'country', 'occupation',
+    'onboarding_completed', 'language', 'status'
+];
 
 export class ProfileService {
     isReady() {
@@ -48,16 +57,55 @@ export class ProfileService {
         return data;
     }
 
+    // Update only whitelisted columns.
     async updateProfile(userId, updates) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
+        const clean = {};
+        Object.keys(updates || {}).forEach((key) => {
+            if (WRITABLE.includes(key)) clean[key] = updates[key];
+        });
+        if (Object.keys(clean).length === 0) {
+            return { success: false, error: 'Nothing to update' };
+        }
         const { data, error } = await supabaseClient
             .from('profiles')
-            .update({ ...updates, updated_at: new Date().toISOString() })
+            .update({ ...clean, updated_at: new Date().toISOString() })
             .eq('id', userId)
             .select()
             .single();
         if (error) return { success: false, error: error.message };
         return { success: true, profile: data };
+    }
+
+    async markOnboardingComplete(userId) {
+        return this.updateProfile(userId, { onboarding_completed: true });
+    }
+
+    // Public subset (id, username, display_name, avatar_url, status, created_at).
+    async getPublicProfile(userId) {
+        if (!this.isReady()) return null;
+        const { data, error } = await supabaseClient
+            .from('profiles_public')
+            .select('*')
+            .eq('id', userId)
+            .maybeSingle();
+        if (error || !data) return null;
+        return data;
+    }
+
+    // Field definitions for the real-user profile editor (mirrors the DB).
+    getDbFieldDefinitions() {
+        return [
+            { key: 'display_name', label: 'Display Name', type: 'text' },
+            { key: 'date_of_birth', label: 'Date of Birth', type: 'date' },
+            { key: 'gender', label: 'Gender', type: 'select', options: ['male', 'female', 'other', 'prefer_not_to_say'] },
+            { key: 'height', label: 'Height (cm)', type: 'number' },
+            { key: 'weight', label: 'Weight (kg)', type: 'number' },
+            { key: 'city', label: 'City', type: 'text' },
+            { key: 'country', label: 'Country', type: 'text' },
+            { key: 'occupation', label: 'Occupation', type: 'text' },
+            { key: 'bio', label: 'Bio', type: 'textarea' }
+        ];
     }
 
     // Shape used by the app: { id, username, name, initial }.

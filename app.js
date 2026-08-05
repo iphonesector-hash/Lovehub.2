@@ -10,25 +10,14 @@ class LoveHub {
             // Check existing session — prefer a real Supabase session, fall
             // back to the legacy local session so nothing breaks mid-migration.
             this.currentUser = authService.getCurrentUser();
-            if (window.LoveHubAuth?.isReady()) {
-                const sbUser = await window.LoveHubAuth.getUser();
-                if (sbUser) {
-                    let profile = await window.LoveHubProfile.getProfile(sbUser.id);
-                    if (!profile) {
-                        profile = await window.LoveHubProfile.ensureProfile(sbUser.id, {
-                            username: sbUser.user_metadata?.username || sbUser.email?.split('@')[0],
-                            displayName: sbUser.user_metadata?.display_name
-                        });
-                    }
-                    this.currentUser = window.LoveHubProfile.toAppUser(profile, sbUser);
-                }
-            }
+            await this.loadAccountState();
             this.setupSplash();
             this.setupTheme();
             this.setupNavigation();
             this.setupChat();
             this.setupMemoryModal();
             this.setupLogin();
+            this.setupOnboarding();
             this.setupSettings();
             this.setupProfileEditing();
             this.setupAvatarUpload();
@@ -39,6 +28,8 @@ class LoveHub {
             // If logged in, show logged-in UI
             if (this.currentUser) {
                 this.updateAuthUI();
+                // Phase 2: route new users into profile/couple onboarding.
+                this.checkOnboarding();
             }
         } catch (error) {
             console.error('Init error:', error);
@@ -49,6 +40,19 @@ class LoveHub {
     // appears — e.g. right after the user clicks the email-confirmation link.
     async refreshAuthFromSupabase() {
         if (!window.LoveHubAuth?.isReady()) return;
+        const hadUser = !!this.currentUser;
+        await this.loadAccountState();
+        if (!this.currentUser) return;
+        this.updateAuthUI();
+        this.renderProfile();
+        this.renderHome();
+        if (!hadUser) this.showToast('Welcome back ❤️');
+        if (this.isRealUser()) this.checkOnboarding();
+    }
+
+    // Phase 2: load the real account state (Supabase user + profile + couple).
+    async loadAccountState() {
+        if (!window.LoveHubAuth?.isReady()) return;
         const sbUser = await window.LoveHubAuth.getUser();
         if (!sbUser) return;
         let profile = await window.LoveHubProfile.getProfile(sbUser.id);
@@ -58,10 +62,62 @@ class LoveHub {
                 displayName: sbUser.user_metadata?.display_name
             });
         }
+        this.currentProfile = profile;
         this.currentUser = window.LoveHubProfile.toAppUser(profile, sbUser);
-        this.updateAuthUI();
+        if (window.LoveHubCouple) {
+            this.currentCouple = await window.LoveHubCouple.getMyCouple();
+        }
+    }
+
+    // Demo accounts (user1/user2) are the hidden dev fallback. Real users are
+    // any other authenticated profile — they must not see demo data.
+    isDemoUser() {
+        const id = this.currentUser?.id;
+        return id === 'user1' || id === 'user2';
+    }
+
+    isRealUser() {
+        return !!this.currentUser && !this.isDemoUser();
+    }
+
+    getDaysTogether() {
+        const start = this.currentCouple?.relationship_started_on;
+        if (!start) return 0;
+        const diff = Math.abs(new Date() - new Date(start + 'T00:00:00'));
+        return Math.ceil(diff / (1000 * 60 * 60 * 24));
+    }
+
+    checkOnboarding() {
+        if (!window.LoveHubOnboarding) return;
+        if (!this.isRealUser()) return;
+        if (this.onboardingDismissed) return;
+        const profileComplete = !!this.currentProfile?.onboarding_completed;
+        const hasCouple = !!this.currentCouple;
+        if (!profileComplete) {
+            window.LoveHubOnboarding.start({ step: 'profile' });
+        } else if (!hasCouple) {
+            window.LoveHubOnboarding.start({ step: 'couple-menu' });
+        }
+    }
+
+    setupOnboarding() {
+        const overlay = document.getElementById('onboardingOverlay');
+        const skip = document.getElementById('onbSkip');
+        if (overlay) overlay.addEventListener('click', (e) => { if (e.target === overlay) this.dismissOnboarding(); });
+        if (skip) skip.addEventListener('click', () => this.dismissOnboarding());
+    }
+
+    dismissOnboarding() {
+        this.onboardingDismissed = true;
+        if (window.LoveHubOnboarding) window.LoveHubOnboarding.close();
+        this.renderHome();
         this.renderProfile();
-        this.showToast('Welcome back ❤️');
+    }
+
+    async refreshCouple() {
+        if (!this.isRealUser() || !window.LoveHubCouple) return;
+        this.currentCouple = await window.LoveHubCouple.getMyCouple();
+        this.renderAll();
     }
 
     setupSplash() {
@@ -237,11 +293,16 @@ class LoveHub {
             const hour = new Date().getHours();
             greeting.textContent = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
         }
-        
-        const days = Math.ceil(Math.abs(new Date() - new Date('2023-01-01')) / (1000 * 60 * 60 * 24));
+
+        // Real users: days come from the confirmed couple start date, never a
+        // hardcoded demo date. Demo users keep the legacy experience.
+        const real = this.isRealUser();
+        const days = real
+            ? this.getDaysTogether()
+            : Math.ceil(Math.abs(new Date() - new Date('2023-01-01')) / (1000 * 60 * 60 * 24));
         this.animateValue('daysCounter', 0, days, 1500);
-        
-        const latestMemory = LoveHubData.memories[0];
+
+        const latestMemory = real ? null : LoveHubData.memories[0];
         if (latestMemory) {
             const imgEl = document.getElementById('latestMemoryImage');
             if (imgEl) {
@@ -259,17 +320,36 @@ class LoveHub {
             if (locationEl) locationEl.textContent = latestMemory.location;
             const quoteEl = document.getElementById('latestMemoryQuote');
             if (quoteEl) quoteEl.textContent = `"${latestMemory.notes}"`;
+        } else {
+            const imgEl = document.getElementById('latestMemoryImage');
+            if (imgEl) imgEl.style.background = 'linear-gradient(135deg, rgba(255,63,95,0.12), rgba(94,92,230,0.12))';
+            const dateEl = document.getElementById('latestMemoryDate');
+            if (dateEl) dateEl.textContent = real ? 'Your story starts here' : 'Loading...';
+            const locationEl = document.getElementById('latestMemoryLocation');
+            if (locationEl) locationEl.textContent = '';
+            const quoteEl = document.getElementById('latestMemoryQuote');
+            if (quoteEl) quoteEl.textContent = real
+                ? (this.currentCouple?.status === 'active' ? 'No memories yet — coming soon' : 'Finish your profile and find your partner')
+                : 'Loading memory...';
         }
-        
+
         const memoriesCount = document.getElementById('memoriesCount');
-        if (memoriesCount) memoriesCount.textContent = `${LoveHubData.memories.length} photos`;
-        
+        if (memoriesCount) memoriesCount.textContent = real ? '0 photos' : `${LoveHubData.memories.length} photos`;
+
         this.updateAvatars();
     }
 
     updateAvatars() {
         const avatarP = document.getElementById('avatarP');
         const avatarS = document.getElementById('avatarS');
+
+        // Real users: own avatar + confirmed partner's avatar. No fake couple.
+        if (this.isRealUser()) {
+            this.applyAvatar(avatarP, this.currentUser?.id, this.currentUser?.initial);
+            this.applyAvatar(avatarS, this.currentCouple?.partner?.id, this.currentCouple?.partner?.display_name?.[0]?.toUpperCase());
+            return;
+        }
+
         const pImg = userService.getAvatar('user1');
         const sImg = userService.getAvatar('user2');
         
@@ -284,6 +364,21 @@ class LoveHub {
             avatarS.style.backgroundSize = 'cover';
             avatarS.style.backgroundPosition = 'center';
             avatarS.childNodes[0].textContent = '';
+        }
+    }
+
+    applyAvatar(el, userId, fallbackInitial) {
+        if (!el) return;
+        el.style.backgroundImage = '';
+        el.classList.remove('has-image');
+        const img = userId ? userService.getAvatar(userId) : null;
+        if (img && img.data) {
+            el.style.backgroundImage = `url(${img.data})`;
+            el.style.backgroundSize = 'cover';
+            el.style.backgroundPosition = 'center';
+            el.childNodes[0].textContent = '';
+        } else {
+            el.childNodes[0].textContent = fallbackInitial || '?';
         }
     }
 
@@ -304,6 +399,13 @@ class LoveHub {
         const conversation = document.getElementById('chatConversation');
         if (!conversation) return;
         conversation.innerHTML = '';
+
+        // Real users: no fake conversation. Chat ships in a later phase.
+        if (this.isRealUser()) {
+            conversation.innerHTML = '<div class="chat-empty" style="text-align:center;color:var(--text-secondary);padding:60px 24px;font-size:15px;line-height:1.7">Your private couple chat<br>will live here — coming soon.</div>';
+            conversation.scrollTop = 0;
+            return;
+        }
         
         const messages = storage.get('messages') || LoveHubData.messages;
         const messagesByDate = {};
@@ -372,26 +474,53 @@ class LoveHub {
     renderLove() {
         const loveStats = document.getElementById('loveStats');
         if (loveStats) {
-            const days = Math.ceil(Math.abs(new Date() - new Date('2023-01-01')) / (1000 * 60 * 60 * 24));
-            const messages = storage.get('messages') || LoveHubData.messages;
-            loveStats.innerHTML = `
-                <div class="love-stat-card glass-card">
-                    <div class="stat-icon" style="color: var(--love-accent)"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg></div>
-                    <div class="stat-value">${days.toLocaleString()}</div>
-                    <div class="stat-label">Days Together</div>
-                </div>
-                <div class="love-stat-card glass-card">
-                    <div class="stat-icon" style="color: var(--luxury-accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></div>
-                    <div class="stat-value">${messages.length}</div>
-                    <div class="stat-label">Messages Sent</div>
-                </div>
-            `;
+            if (this.isRealUser()) {
+                const days = this.getDaysTogether();
+                loveStats.innerHTML = `
+                    <div class="love-stat-card glass-card">
+                        <div class="stat-icon" style="color: var(--love-accent)"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg></div>
+                        <div class="stat-value">${days.toLocaleString()}</div>
+                        <div class="stat-label">Days Together</div>
+                    </div>
+                    <div class="love-stat-card glass-card">
+                        <div class="stat-icon" style="color: var(--luxury-accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></div>
+                        <div class="stat-value">0</div>
+                        <div class="stat-label">Messages Sent</div>
+                    </div>
+                `;
+            } else {
+                const days = Math.ceil(Math.abs(new Date() - new Date('2023-01-01')) / (1000 * 60 * 60 * 24));
+                const messages = storage.get('messages') || LoveHubData.messages;
+                loveStats.innerHTML = `
+                    <div class="love-stat-card glass-card">
+                        <div class="stat-icon" style="color: var(--love-accent)"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg></div>
+                        <div class="stat-value">${days.toLocaleString()}</div>
+                        <div class="stat-label">Days Together</div>
+                    </div>
+                    <div class="love-stat-card glass-card">
+                        <div class="stat-icon" style="color: var(--luxury-accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></div>
+                        <div class="stat-value">${messages.length}</div>
+                        <div class="stat-label">Messages Sent</div>
+                    </div>
+                `;
+            }
         }
-        
-        document.getElementById('loveLetterContent').textContent = `"${LoveHubData.relationship.loveLetter}"`;
-        document.getElementById('loveLetterFrom').textContent = `— ${LoveHubData.relationship.writtenBy}`;
-        
+
+        const letterEl = document.getElementById('loveLetterContent');
+        const fromEl = document.getElementById('loveLetterFrom');
         const milestonesContainer = document.getElementById('loveMilestones');
+        if (this.isRealUser()) {
+            if (letterEl) letterEl.textContent = '"Write your first love letter here soon."';
+            if (fromEl) fromEl.textContent = '';
+            if (milestonesContainer) {
+                milestonesContainer.innerHTML = '<div class="glass-card" style="padding:20px;text-align:center;color:var(--text-secondary)">Milestones will appear here</div>';
+            }
+            return;
+        }
+
+        if (letterEl) letterEl.textContent = `"${LoveHubData.relationship.loveLetter}"`;
+        if (fromEl) fromEl.textContent = `— ${LoveHubData.relationship.writtenBy}`;
+        
         if (milestonesContainer) {
             milestonesContainer.innerHTML = '';
             LoveHubData.milestones.forEach(m => {
@@ -407,6 +536,7 @@ class LoveHub {
         const gamesGrid = document.getElementById('gamesGrid');
         if (!gamesGrid) return;
         gamesGrid.innerHTML = '';
+        const real = this.isRealUser();
         
         LoveHubData.games.forEach(game => {
             const card = document.createElement('div');
@@ -417,10 +547,11 @@ class LoveHub {
                     <div class="game-title">${game.name}</div>
                     <div class="game-desc">${game.description}</div>
                     <div class="game-meta">
-                        <span class="game-rating">★ ${game.rating}</span>
-                        <span class="game-wins"> ${game.wins} wins</span>
+                        ${real
+                            ? '<span class="game-rating">Play together — coming soon</span>'
+                            : `<span class="game-rating">★ ${game.rating}</span><span class="game-wins"> ${game.wins} wins</span>`}
                     </div>
-                    <div class="game-last">Last played: ${game.lastPlayed}</div>
+                    ${real ? '' : `<div class="game-last">Last played: ${game.lastPlayed}</div>`}
                 </div>
                 <button class="play-btn" data-game-id="${game.id}">▶ Play</button>
             `;
@@ -435,6 +566,10 @@ class LoveHub {
         const memoriesGrid = document.getElementById('memoriesGrid');
         if (!memoriesGrid) return;
         memoriesGrid.innerHTML = '';
+        if (this.isRealUser()) {
+            memoriesGrid.innerHTML = '<div class="glass-card" style="grid-column:1/-1;padding:26px;text-align:center;color:var(--text-secondary);font-size:14px;line-height:1.7">No memories yet.<br>Your shared photo memories will live here.</div>';
+            return;
+        }
         
         LoveHubData.memories.forEach(memory => {
             const item = document.createElement('div');
@@ -494,6 +629,10 @@ class LoveHub {
     renderTimeline() {
         const timelineContainer = document.getElementById('timelineList');
         if (!timelineContainer) return;
+        if (this.isRealUser()) {
+            timelineContainer.innerHTML = '<div class="glass-card" style="padding:26px;text-align:center;color:var(--text-secondary);font-size:14px">Your timeline will grow here as you create memories together.</div>';
+            return;
+        }
         timelineContainer.innerHTML = '';
         
         const timelineItems = [
@@ -515,14 +654,16 @@ class LoveHub {
         const avatarEl = document.getElementById('profileAvatarInitial');
         const nameEl = document.getElementById('profileName');
         const subtitleEl = document.getElementById('profileSubtitle');
-        
-        if (user) {
-            const profile = userService.getProfile(user.id);
-            const displayName = profile.firstName || user.name;
+        const personalInfoCard = document.getElementById('personalInfoCard');
+
+        if (user && this.isRealUser()) {
+            // Real profile, straight from the DB — no demo fallbacks.
+            const profile = this.currentProfile || {};
+            const displayName = profile.display_name || user.name || user.username || 'Friend';
             nameEl.textContent = displayName.toUpperCase();
-            avatarEl.textContent = (profile.firstName?.[0] || user.initial).toUpperCase();
-            subtitleEl.textContent = `Together since 2023`;
-            
+            avatarEl.textContent = (displayName[0] || user.initial || '?').toUpperCase();
+            subtitleEl.textContent = this.getProfileSubtitle(profile);
+
             const avatarImg = userService.getAvatar(user.id);
             if (avatarImg) {
                 avatarEl.style.backgroundImage = `url(${avatarImg.data})`;
@@ -533,8 +674,28 @@ class LoveHub {
                 avatarEl.style.backgroundImage = '';
                 avatarEl.classList.remove('has-image');
             }
-            
-            const personalInfoCard = document.getElementById('personalInfoCard');
+
+            if (personalInfoCard) this.renderDbPersonalInfo(personalInfoCard, profile);
+            this.renderHealth();
+        } else if (user) {
+            // Legacy demo user — keep the old local experience intact.
+            const profile = userService.getProfile(user.id);
+            const displayName = profile.firstName || user.name;
+            nameEl.textContent = displayName.toUpperCase();
+            avatarEl.textContent = (profile.firstName?.[0] || user.initial).toUpperCase();
+            subtitleEl.textContent = `Together since 2023`;
+
+            const avatarImg = userService.getAvatar(user.id);
+            if (avatarImg) {
+                avatarEl.style.backgroundImage = `url(${avatarImg.data})`;
+                avatarEl.style.backgroundSize = 'cover';
+                avatarEl.style.backgroundPosition = 'center';
+                avatarEl.classList.add('has-image');
+            } else {
+                avatarEl.style.backgroundImage = '';
+                avatarEl.classList.remove('has-image');
+            }
+
             if (personalInfoCard) {
                 personalInfoCard.innerHTML = '';
                 const fields = [
@@ -563,10 +724,106 @@ class LoveHub {
             }
             this.renderHealth();
         } else {
-            nameEl.textContent = 'POURYA';
-            avatarEl.textContent = 'P';
+            nameEl.textContent = 'LOVEHUB';
+            avatarEl.textContent = '♥';
             subtitleEl.textContent = 'Login to see your profile';
-            document.getElementById('personalInfoCard').innerHTML = '<div class="info-row"><span class="info-key" style="width:100%;text-align:center;">Please login to view profile</span></div>';
+            if (personalInfoCard) personalInfoCard.innerHTML = '<div class="info-row"><span class="info-key" style="width:100%;text-align:center;">Please login to view profile</span></div>';
+        }
+        this.renderCoupleSection();
+    }
+
+    renderDbPersonalInfo(card, profile) {
+        card.innerHTML = '';
+        const genderLabel = profile.gender === 'prefer_not_to_say' ? 'Prefer not to say' : profile.gender;
+        const rows = [
+            { label: 'Birthday', value: profile.date_of_birth ? new Date(profile.date_of_birth + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '' },
+            { label: 'Gender', value: genderLabel || '' },
+            { label: 'Height', value: profile.height ? `${profile.height} cm` : '' },
+            { label: 'Weight', value: profile.weight ? `${profile.weight} kg` : '' },
+            { label: 'City', value: profile.city || '' },
+            { label: 'Country', value: profile.country || '' },
+            { label: 'Occupation', value: profile.occupation || '' },
+            { label: 'Bio', value: profile.bio || '' }
+        ];
+        rows.forEach(r => {
+            if (r.value) {
+                const row = document.createElement('div');
+                row.className = 'info-row';
+                row.innerHTML = `<span class="info-key">${r.label}</span><span class="info-val">${this.escapeHtml(r.value)}</span>`;
+                card.appendChild(row);
+            }
+        });
+        if (card.children.length === 0) {
+            card.innerHTML = '<div class="info-row"><span class="info-key" style="width:100%;text-align:center;">No information yet. Tap Edit Profile to add.</span></div>';
+        }
+    }
+
+    getProfileSubtitle(profile) {
+        if (this.currentCouple?.status === 'active') {
+            if (this.currentCouple.relationship_started_on) {
+                return `Together since ${new Date(this.currentCouple.relationship_started_on + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`;
+            }
+            return 'Connected on LoveHub';
+        }
+        return profile.onboarding_completed ? 'Find your partner' : 'Complete your profile';
+    }
+
+    renderCoupleSection() {
+        const el = document.getElementById('coupleSection');
+        if (!el) return;
+        if (!this.currentUser) {
+            el.innerHTML = '<div class="glass-card" style="padding:22px;text-align:center;color:var(--text-secondary);font-size:14px">Login to find your partner</div>';
+            return;
+        }
+        if (this.isDemoUser()) {
+            el.innerHTML = '<div class="glass-card" style="padding:22px;text-align:center;color:var(--text-secondary);font-size:14px">Couples are available to real accounts.</div>';
+            return;
+        }
+
+        const couple = this.currentCouple;
+        if (couple?.status === 'active') {
+            const partnerName = couple.partner?.display_name || 'Your partner';
+            const partnerInitial = partnerName[0]?.toUpperCase() || '?';
+            const since = couple.relationship_started_on
+                ? new Date(couple.relationship_started_on + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                : null;
+            const days = this.getDaysTogether();
+            el.innerHTML = `
+                <div class="glass-card" style="padding:20px">
+                    <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+                        <div class="avatar-circle" style="width:52px;height:52px;font-size:20px">${this.escapeHtml(partnerInitial)}</div>
+                        <div style="flex:1">
+                            <div style="font-weight:600;font-size:17px">${this.escapeHtml(partnerName)}</div>
+                            <div style="font-size:13px;color:var(--text-secondary)">@${this.escapeHtml(couple.partner?.username || '')}</div>
+                        </div>
+                    </div>
+                    ${since ? `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">Together since ${since} · ${days.toLocaleString()} days</div>` : ''}
+                    <button class="login-submit" id="coupleManageBtn" style="margin:0;font-size:14px">Manage Couple</button>
+                </div>`;
+            const manage = document.getElementById('coupleManageBtn');
+            if (manage) manage.addEventListener('click', () => window.LoveHubOnboarding?.start({ step: 'status' }));
+        } else if (couple?.status === 'pending') {
+            const isCreator = couple.created_by === this.currentUser.id;
+            el.innerHTML = `
+                <div class="glass-card" style="padding:20px;text-align:center">
+                    ${isCreator
+                        ? `<div style="font-size:14px;color:var(--text-secondary);margin-bottom:8px">Your invite code</div>
+                           <div style="font-size:26px;font-weight:800;letter-spacing:6px;color:var(--love-accent);margin-bottom:12px">${this.escapeHtml(couple.invite_code)}</div>`
+                        : `<div style="font-size:15px;margin-bottom:6px">Waiting for your partner to accept</div>
+                           <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">You will be connected here</div>`}
+                    <button class="login-submit" id="coupleStatusBtn" style="margin:0;font-size:14px">View status</button>
+                </div>`;
+            const status = document.getElementById('coupleStatusBtn');
+            if (status) status.addEventListener('click', () => window.LoveHubOnboarding?.start({ step: 'status' }));
+        } else {
+            el.innerHTML = `
+                <div class="glass-card" style="padding:22px;text-align:center">
+                    <div style="font-size:15px;margin-bottom:6px">Find your partner</div>
+                    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">Create a couple and share your invite code, or join with theirs.</div>
+                    <button class="login-submit" id="coupleSetupBtn" style="margin:0">Create / Join Couple</button>
+                </div>`;
+            const setup = document.getElementById('coupleSetupBtn');
+            if (setup) setup.addEventListener('click', () => window.LoveHubOnboarding?.start({ step: 'couple-menu' }));
         }
     }
 
@@ -574,6 +831,12 @@ class LoveHub {
         const healthGrid = document.getElementById('healthGrid');
         if (!healthGrid) return;
         healthGrid.innerHTML = '';
+
+        // Real users: no randomly generated mock metrics.
+        if (this.isRealUser()) {
+            healthGrid.innerHTML = '<div class="glass-card" style="grid-column:1/-1;padding:22px;text-align:center;color:var(--text-secondary);font-size:14px">Health data will appear here</div>';
+            return;
+        }
         
         const healthData = healthService.getTodayData();
         const metrics = healthService.getMetrics().slice(0, 4);
@@ -754,9 +1017,14 @@ class LoveHub {
                 passField.value = '';
                 nameField.value = '';
                 emailField.value = '';
+                if (this.isRealUser()) {
+                    await this.loadAccountState();
+                    this.onboardingDismissed = false;
+                }
                 this.updateAuthUI();
-                this.renderProfile();
+                this.renderAll();
                 this.showToast('Login Successful ❤️');
+                if (this.isRealUser()) this.checkOnboarding();
             } else {
                 this.showToast(result.error || 'Login failed');
             }
@@ -770,8 +1038,13 @@ class LoveHub {
                 if (window.LoveHubAuth?.isReady()) await window.LoveHubAuth.signOut();
                 authService.logout();
                 this.currentUser = null;
+                this.currentProfile = null;
+                this.currentCouple = null;
+                this.onboardingDismissed = false;
+                if (window.LoveHubOnboarding) window.LoveHubOnboarding.close();
                 this.updateAuthUI();
                 this.renderProfile();
+                this.renderHome();
                 this.showToast('Logged out successfully');
             }
         });
@@ -798,8 +1071,10 @@ class LoveHub {
                 this.showToast('Please login first');
                 return;
             }
-            const profile = userService.getProfile(this.currentUser.id);
-            const fields = userService.getAllFieldDefinitions();
+            // Real users edit the DB-backed fields; demo users keep the legacy form.
+            const real = this.isRealUser();
+            const profile = real ? (this.currentProfile || {}) : userService.getProfile(this.currentUser.id);
+            const fields = real ? window.LoveHubProfile.getDbFieldDefinitions() : userService.getAllFieldDefinitions();
             form.innerHTML = '';
             
             fields.forEach(f => {
@@ -842,18 +1117,35 @@ class LoveHub {
         if (closeBtn) closeBtn.addEventListener('click', () => modal.classList.remove('active'));
         modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('active'); });
         
-        saveBtn.addEventListener('click', () => {
+        saveBtn.addEventListener('click', async () => {
             const inputs = form.querySelectorAll('[data-field]');
             const profileData = {};
             inputs.forEach(input => {
-                profileData[input.dataset.field] = input.value;
+                let v = input.value;
+                if (this.isRealUser()) {
+                    if (input.dataset.field === 'height' || input.dataset.field === 'weight') v = v === '' ? null : Number(v);
+                    if (input.dataset.field === 'date_of_birth') v = v === '' ? null : v;
+                }
+                profileData[input.dataset.field] = v;
             });
             
-            const result = userService.saveProfile(this.currentUser.id, profileData);
-            if (result.success) {
-                modal.classList.remove('active');
-                this.renderProfile();
-                this.showToast('Profile saved');
+            if (this.isRealUser()) {
+                const res = await window.LoveHubProfile.updateProfile(this.currentUser.id, profileData);
+                if (res.success) {
+                    this.currentProfile = res.profile;
+                    modal.classList.remove('active');
+                    this.renderProfile();
+                    this.showToast('Profile saved');
+                } else {
+                    this.showToast(res.error || 'Could not save profile');
+                }
+            } else {
+                const result = userService.saveProfile(this.currentUser.id, profileData);
+                if (result.success) {
+                    modal.classList.remove('active');
+                    this.renderProfile();
+                    this.showToast('Profile saved');
+                }
             }
         });
         
