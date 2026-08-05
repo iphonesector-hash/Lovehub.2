@@ -1,0 +1,5 @@
+{
+  "buildCommand": "sh ./scripts/build.sh",
+  "outputDirectory": "dist",
+  "framework": null
+}

@@ -27,40 +27,53 @@ Migrate `app.js` login/profile/games flows to call `supabaseService`
 instead of `authService`/`storage`, one screen at a time, starting with
 login/signup.
 
-## 6. Production deploys (GitHub Pages / Freebuff hosting)
+## 6. Production deploys (Vercel)
 
 `supabase/config.js` is git-ignored, so a clean deploy checkout never has it.
 The build (`scripts/build.sh`) therefore GENERATES `dist/supabase/config.js`
 from environment variables, keeping the exact `SUPABASE_CONFIG` interface
 `SupabaseClient.js` already reads — no app code changes between environments.
 
-### GitHub Pages (`.github/workflows/deploy-pages.yml`)
+### Vercel project setup
 
-1. Add two repository secrets (Settings → Secrets and variables → Actions):
+`vercel.json` pins the build:
+
+```json
+{
+  "buildCommand": "sh ./scripts/build.sh",
+  "outputDirectory": "dist",
+  "framework": null
+}
+```
+
+1. Import the repo on Vercel (framework detection falls back to "Other" —
+   `vercel.json` supplies the build command and output directory).
+2. Add environment variables (Project → Settings → Environment Variables),
+   applying them to Production, Preview, and Development:
    - `SUPABASE_URL` — e.g. `https://xxxx.supabase.co`
    - `SUPABASE_ANON_KEY` — the public anon key (never the service_role key)
-2. Enable Pages: Settings → Pages → Source **GitHub Actions**.
-3. Push to `main`; the workflow builds `dist/` and deploys it.
-4. If the build fails with "no supabase/config.js produced", the secrets are
-   missing — the build fails loudly rather than shipping a demo-only site.
+3. Deploy. The build script writes `dist/supabase/config.js` from those env
+   vars. If they are missing the build fails loudly with
+   "no supabase/config.js produced" instead of shipping a demo-only site.
 
-### Freebuff hosting
+### Freebuff hosting (optional)
 
-Set the same two values as deployment env vars
-(`freebuff-deploy env set '{"SUPABASE_URL":"...","SUPABASE_ANON_KEY":"..."}'`)
-so the deploy build generates the config too.
+The same build script works there: set `SUPABASE_URL` and `SUPABASE_ANON_KEY`
+as deployment env vars (`freebuff-deploy env set` …) so the deploy build
+generates the config too.
 
 ### Supabase Auth — URL configuration
 
 Dashboard → Authentication → URL Configuration:
 
-- **Site URL:**
-  - Preview: the Freebuff preview URL (e.g. `https://…daytonaproxy01.net`)
-  - GitHub Pages: `https://iphonesector-hash.github.io/Lovehub.2/`
+- **Site URL:** your Vercel production domain
+  (e.g. `https://lovehub.vercel.app` or your custom domain)
 - **Redirect URLs** — add each environment, with `**` for sub-paths:
-  - `https://iphonesector-hash.github.io/Lovehub.2/**`
-  - `https://*.daytonaproxy01.net/**` (preview)
+  - `https://<your-vercel-project>.vercel.app/**` (production)
+  - `https://<your-vercel-project>-git-*.vercel.app/**` (preview branches)
+  - the Freebuff preview URL (e.g. `https://*.daytonaproxy01.net/**`)
 
 `AuthService` sends `redirectTo` = current origin + path (normalized to the
-app root, `index.html` stripped) so email-confirmation and password-reset
-links land back on the app where `detectSessionInUrl` processes the token.
+app root, `index.html` stripped), so email-confirmation and password-reset
+links land back on the app on whichever domain it is served from, where
+`detectSessionInUrl` processes the token.
