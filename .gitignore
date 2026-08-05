@@ -8,3 +8,6 @@ supabase/config.js
 dist/
 node_modules/
 .DS_Store
+
+# Vercel CLI local state
+.vercel/
