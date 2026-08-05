@@ -7,8 +7,23 @@ class LoveHub {
 
     async init() {
         try {
-            // Check existing session
+            // Check existing session — prefer a real Supabase session, fall
+            // back to the legacy local session so nothing breaks mid-migration.
             this.currentUser = authService.getCurrentUser();
+            if (supabaseService && supabaseService.ready) {
+                const sbUser = await supabaseService.getCurrentUser();
+                if (sbUser) {
+                    const profile = await supabaseService.getProfile(sbUser.id);
+                    if (profile) {
+                        this.currentUser = {
+                            id: sbUser.id,
+                            username: profile.username,
+                            name: profile.display_name,
+                            initial: profile.display_name[0]?.toUpperCase()
+                        };
+                    }
+                }
+            }
             this.setupSplash();
             this.setupTheme();
             this.setupNavigation();
@@ -564,42 +579,106 @@ class LoveHub {
         const overlay = document.getElementById('loginOverlay');
         const cancelBtn = document.getElementById('loginCancel');
         const submitBtn = document.getElementById('loginSubmit');
-        
-        loginBtn.addEventListener('click', () => overlay.classList.add('active'));
+        const switchModeBtn = document.getElementById('loginSwitchMode');
+        const nameField = document.getElementById('signupName');
+        const titleEl = document.getElementById('loginTitle');
+        const subEl = document.getElementById('loginSub');
+
+        let isSignupMode = false;
+
+        const setMode = (signup) => {
+            isSignupMode = signup;
+            nameField.style.display = signup ? 'block' : 'none';
+            titleEl.textContent = signup ? 'Create Account' : 'Welcome Back';
+            subEl.textContent = signup ? 'Join LoveHub' : 'Login to your LoveHub account';
+            submitBtn.textContent = signup ? 'Sign Up' : 'Login';
+            switchModeBtn.textContent = signup ? 'Already have an account? Login' : "Don't have an account? Sign up";
+        };
+
+        switchModeBtn.addEventListener('click', () => setMode(!isSignupMode));
+
+        loginBtn.addEventListener('click', () => { setMode(false); overlay.classList.add('active'); });
         cancelBtn.addEventListener('click', () => overlay.classList.remove('active'));
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
-        
+
+        // Supabase requires an email; the app only asks for a username, so we
+        // derive a stable synthetic email per username. Users never see this.
+        const toEmail = (username) => `${username.toLowerCase().trim()}@lovehub.local`;
+
         submitBtn.addEventListener('click', async () => {
             const username = document.getElementById('loginUser').value.trim();
             const password = document.getElementById('loginPass').value;
-            
+            const displayName = nameField.value.trim();
+
             if (!username || !password) {
                 this.showToast('Please enter credentials');
                 return;
             }
-            
+            if (isSignupMode && !displayName) {
+                this.showToast('Please enter a display name');
+                return;
+            }
+
             submitBtn.disabled = true;
-            submitBtn.textContent = 'Logging in...';
-            
-            const result = authService.login(username, password);
+            submitBtn.textContent = isSignupMode ? 'Creating account...' : 'Logging in...';
+
+            let result;
+
+            if (isSignupMode) {
+                result = (supabaseService && supabaseService.ready)
+                    ? await supabaseService.signUp(toEmail(username), password, username, displayName)
+                    : { success: false, error: 'Backend not configured yet' };
+
+                if (result.success) {
+                    this.showToast('Account created — check email to confirm, or try logging in.');
+                    setMode(false);
+                    submitBtn.disabled = false;
+                    setMode(false);
+                    return;
+                }
+            } else {
+                // Try the real backend first; fall back to the legacy local
+                // accounts (Pourya/Sarina) so nothing breaks mid-migration.
+                if (supabaseService && supabaseService.ready) {
+                    const sbResult = await supabaseService.login(toEmail(username), password);
+                    if (sbResult.success) {
+                        const profile = await supabaseService.getProfile(sbResult.user.id);
+                        result = {
+                            success: true,
+                            user: {
+                                id: sbResult.user.id,
+                                username: profile?.username || username,
+                                name: profile?.display_name || username,
+                                initial: (profile?.display_name || username)[0]?.toUpperCase()
+                            }
+                        };
+                    }
+                }
+                if (!result || !result.success) {
+                    result = authService.login(username, password);
+                }
+            }
+
             if (result.success) {
                 this.currentUser = result.user;
                 overlay.classList.remove('active');
                 document.getElementById('loginUser').value = '';
                 document.getElementById('loginPass').value = '';
+                nameField.value = '';
                 this.updateAuthUI();
                 this.renderProfile();
                 this.showToast('Login Successful ❤️');
             } else {
-                this.showToast(result.error);
+                this.showToast(result.error || 'Login failed');
             }
-            
+
             submitBtn.disabled = false;
-            submitBtn.textContent = 'Login';
+            setMode(isSignupMode);
         });
-        
+
         logoutBtn.addEventListener('click', () => {
             if (confirm('Are you sure you want to logout?')) {
+                if (supabaseService && supabaseService.ready) supabaseService.logout();
                 authService.logout();
                 this.currentUser = null;
                 this.updateAuthUI();
