@@ -6,6 +6,18 @@ import { supabaseClient, isSupabaseReady, getInitStatus } from './SupabaseClient
 
 const EMAIL_MAP_KEY = 'usernameEmails';
 
+// Build the redirect URL used in Supabase email-confirmation / password-reset
+// links. The app is served under a sub-path on GitHub Pages (/Lovehub.2/) and
+// users can land on /index.html, so normalize to a stable app-root URL — it
+// must match a Supabase Auth "Redirect URLs" allowlist entry exactly.
+function buildRedirectUrl() {
+    if (typeof location === 'undefined' || !location.origin) return undefined;
+    let path = location.pathname || '/';
+    if (path.endsWith('index.html')) path = path.slice(0, -'index.html'.length);
+    if (!path.endsWith('/')) path += '/';
+    return `${location.origin}${path}`;
+}
+
 export class AuthService {
     constructor() {
         this.session = null;
@@ -129,7 +141,7 @@ export class AuthService {
                         username: (username || '').toLowerCase().trim(),
                         display_name: displayName
                     },
-                    emailRedirectTo: `${location.origin}${location.pathname}`
+                    emailRedirectTo: buildRedirectUrl()
                 }
             });
             if (error) return { success: false, error: error.message };
@@ -198,7 +210,7 @@ export class AuthService {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
         try {
             const { error } = await supabaseClient.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-                redirectTo: `${location.origin}${location.pathname}`
+                redirectTo: buildRedirectUrl()
             });
             return { success: !error, error: error?.message };
         } catch (error) {

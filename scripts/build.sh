@@ -12,6 +12,10 @@
 # The generated file keeps the exact SUPABASE_CONFIG interface the app
 # already reads ({ url, anonKey }), so no app code needs to change.
 # Local/dev builds (env vars unset) fall back to the on-disk config.js.
+#
+# IMPORTANT: in a clean checkout (GitHub Actions, Freebuff hosting) a missing
+# SUPABASE_URL/SUPABASE_ANON_KEY means auth will silently break, so the build
+# FAILS loudly instead of shipping a demo-only site.
 
 set -e
 
@@ -26,5 +30,6 @@ if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
 elif [ -f dist/supabase/config.js ]; then
   echo "build: shipped local supabase/config.js (dev/preview build)"
 else
-  echo "build: WARNING — no supabase/config.js produced. Set SUPABASE_URL + SUPABASE_ANON_KEY (freebuff-deploy env) to enable production auth."
+  echo "build: ERROR — no supabase/config.js produced. Set SUPABASE_URL + SUPABASE_ANON_KEY to enable production auth." >&2
+  exit 1
 fi
