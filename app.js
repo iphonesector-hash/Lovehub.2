@@ -18,6 +18,7 @@ class LoveHub {
             this.setupMemoryModal();
             this.setupLogin();
             this.setupOnboarding();
+            this.setupRecovery();
             this.setupSettings();
             this.setupProfileEditing();
             this.setupAvatarUpload();
@@ -29,7 +30,13 @@ class LoveHub {
             if (this.currentUser) {
                 this.updateAuthUI();
                 // Phase 2: route new users into profile/couple onboarding.
-                this.checkOnboarding();
+                if (window.LoveHubPendingRecovery) {
+                    // A password-recovery link opened the app before boot finished.
+                    window.LoveHubPendingRecovery = false;
+                    this.openRecovery();
+                } else {
+                    this.checkOnboarding();
+                }
             }
         } catch (error) {
             console.error('Init error:', error);
@@ -112,6 +119,88 @@ class LoveHub {
         if (window.LoveHubOnboarding) window.LoveHubOnboarding.close();
         this.renderHome();
         this.renderProfile();
+    }
+
+    // Phase 2.1 — real backend diagnostics ---------------------------------
+
+    // Human-readable reason when the Supabase backend is unavailable, or null.
+    getBackendMessage() {
+        const s = window.LoveHubInit;
+        if (!s || s.status === 'ok') return null;
+        if (s.status === 'missing-config') {
+            return 'Demo mode only: supabase/config.js is missing (copy config.example.js → config.js) to enable real accounts.';
+        }
+        return s.reason || 'The Supabase backend failed to initialize.';
+    }
+
+    setupRecovery() {
+        const overlay = document.getElementById('recoveryOverlay');
+        const cancel = document.getElementById('recoveryCancel');
+        const submit = document.getElementById('recoverySubmit');
+        if (!overlay) return;
+        if (cancel) cancel.addEventListener('click', () => this.closeRecovery());
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) this.closeRecovery(); });
+        if (submit) submit.addEventListener('click', () => this.submitRecovery());
+    }
+
+    // Shown when a PASSWORD_RECOVERY session is detected (user clicked the
+    // "Forgot password" email link and landed back on the app).
+    openRecovery() {
+        const overlay = document.getElementById('recoveryOverlay');
+        if (!overlay) return;
+        const pw = document.getElementById('recoveryPassword');
+        const conf = document.getElementById('recoveryConfirm');
+        if (pw) pw.value = '';
+        if (conf) conf.value = '';
+        overlay.classList.add('active');
+    }
+
+    closeRecovery() {
+        const overlay = document.getElementById('recoveryOverlay');
+        if (overlay) overlay.classList.remove('active');
+        this.stripRecoveryHash();
+    }
+
+    // Consume the recovery tokens in the URL so they don't re-trigger on reload.
+    stripRecoveryHash() {
+        try {
+            if (window.location.hash) {
+                history.replaceState(null, '', window.location.pathname + window.location.search);
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    async submitRecovery() {
+        const pw = document.getElementById('recoveryPassword')?.value || '';
+        const conf = document.getElementById('recoveryConfirm')?.value || '';
+        if (pw.length < 6) { this.showToast('Password must be at least 6 characters'); return; }
+        if (pw !== conf) { this.showToast('Passwords do not match'); return; }
+        if (!window.LoveHubAuth?.isReady()) {
+            this.showToast(this.getBackendMessage() || 'Backend unavailable');
+            return;
+        }
+
+        const res = await window.LoveHubAuth.updatePassword(pw);
+        if (!res.success) {
+            this.showToast(res.error || 'Could not update password');
+            return;
+        }
+
+        this.showToast('Password updated — log in with your new password');
+        this.closeRecovery();
+        await window.LoveHubAuth.signOut();
+        this.currentUser = null;
+        this.currentProfile = null;
+        this.currentCouple = null;
+        this.updateAuthUI();
+        this.renderProfile();
+        this.renderHome();
+
+        // Back to the login sheet, forced to login mode.
+        const overlay = document.getElementById('loginOverlay');
+        if (overlay) overlay.classList.add('active');
+        if (this.resetLoginForgot) this.resetLoginForgot();
+        if (this.setLoginMode) this.setLoginMode(false);
     }
 
     async refreshCouple() {
@@ -894,6 +983,10 @@ class LoveHub {
             forgotBtn.style.display = isSignupMode ? 'none' : 'block';
         };
 
+        // Exposed so the recovery flow can force the sheet back to login mode.
+        this.setLoginMode = setMode;
+        this.resetLoginForgot = resetForgotMode;
+
         switchModeBtn.addEventListener('click', () => setMode(!isSignupMode));
 
         // Forgot-password mode reuses the email field (login stays
@@ -916,6 +1009,8 @@ class LoveHub {
             resetForgotMode();
             setMode(false);
             overlay.classList.add('active');
+            const backendMsg = this.getBackendMessage();
+            if (backendMsg) this.showToast(backendMsg, 4500);
         });
         cancelBtn.addEventListener('click', () => overlay.classList.remove('active'));
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
@@ -934,9 +1029,13 @@ class LoveHub {
                 }
                 submitBtn.disabled = true;
                 submitBtn.textContent = 'Sending...';
-                const res = (window.LoveHubAuth?.isReady())
-                    ? await window.LoveHubAuth.resetPasswordForEmail(email)
-                    : { success: false, error: 'Backend not configured' };
+                if (!window.LoveHubAuth?.isReady()) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Send Reset Link';
+                    this.showToast(this.getBackendMessage() || 'Backend unavailable');
+                    return;
+                }
+                const res = await window.LoveHubAuth.resetPasswordForEmail(email);
                 submitBtn.disabled = false;
                 if (res.success) {
                     this.showToast('Reset link sent — check your email');
@@ -987,23 +1086,28 @@ class LoveHub {
                     }
                     result = { success: false, error: res.error };
                 } else {
-                    result = { success: false, error: 'Backend not configured — demo accounts only' };
+                    result = { success: false, error: this.getBackendMessage() || 'Backend unavailable' };
                 }
             } else {
-                // Real Supabase login (by username -> remembered email). Falls
-                // back to the legacy demo accounts only when the username is
-                // not a Supabase account (or the backend is not configured).
-                const isSupabaseUsername = window.LoveHubAuth?.isReady() && window.LoveHubAuth.hasEmailFor(username);
-                if (isSupabaseUsername) {
-                    const sbResult = await window.LoveHubAuth.signInWithUsername(username, password);
-                    if (sbResult.success) {
-                        const profile = await window.LoveHubProfile.getProfile(sbResult.user.id);
-                        result = { success: true, user: window.LoveHubProfile.toAppUser(profile, sbResult.user) };
-                    } else {
-                        // Needs-confirmation or wrong password — show the error,
-                        // never silently land on a demo account with the same name.
-                        result = { success: false, error: sbResult.error };
+                // Real Supabase login (by username -> remembered email).
+                if (window.LoveHubAuth?.isReady()) {
+                    if (window.LoveHubAuth.hasEmailFor(username)) {
+                        const sbResult = await window.LoveHubAuth.signInWithUsername(username, password);
+                        if (sbResult.success) {
+                            const profile = await window.LoveHubProfile.getProfile(sbResult.user.id);
+                            result = { success: true, user: window.LoveHubProfile.toAppUser(profile, sbResult.user) };
+                        } else {
+                            // Needs-confirmation or wrong password — show the error,
+                            // never silently land on a demo account with the same name.
+                            result = { success: false, error: sbResult.error };
+                        }
                     }
+                } else if (window.LoveHubInit?.status === 'missing-config') {
+                    // Supabase genuinely absent — demo fallback is allowed.
+                    result = authService.login(username, password);
+                } else {
+                    // Configured but broken — show the real reason, never a fake demo success.
+                    result = { success: false, error: this.getBackendMessage() || 'Backend unavailable' };
                 }
                 if (!result) {
                     result = authService.login(username, password);

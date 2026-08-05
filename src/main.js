@@ -1,6 +1,6 @@
 // src/main.js
 // LoveHub ES-module boot entry (Phase 0: icons — Phase 1: auth —
-// Phase 2: couple system + onboarding).
+// Phase 2: couple system + onboarding — Phase 2.1: init diagnostics + recovery).
 //
 // Loaded from index.html as <script type="module" src="src/main.js">.
 // Module scripts run after HTML parsing, so DOM references below are safe.
@@ -12,13 +12,14 @@ import { AuthService } from './services/AuthService.js';
 import { ProfileService } from './services/ProfileService.js';
 import { CoupleService } from './services/CoupleService.js';
 import { OnboardingFlow } from './onboarding/OnboardingFlow.js';
+import { getInitStatus } from './services/SupabaseClient.js';
 
 installIcons();
 
 // Phase 1: real Supabase auth + profiles.
 // Phase 2: couple system + onboarding.
-// Exposed on window so the legacy app.js can consume them without a rewrite
-// (incremental migration — old services stay until each piece is verified).
+// Phase 2.1: init diagnostics — the UI can show the REAL reason when the
+// backend is unavailable instead of silently falling back to demo mode.
 const loveHubAuth = new AuthService();
 const loveHubProfile = new ProfileService();
 const loveHubCouple = new CoupleService();
@@ -26,12 +27,24 @@ window.LoveHubAuth = loveHubAuth;
 window.LoveHubProfile = loveHubProfile;
 window.LoveHubCouple = loveHubCouple;
 window.LoveHubOnboarding = new OnboardingFlow();
+window.LoveHubInit = getInitStatus();
+
+// Set when a password-recovery link arrives before the legacy app exists
+// (module scripts run before DOMContentLoaded). app.js checks it in init().
+window.LoveHubPendingRecovery = false;
 
 if (loveHubAuth.isReady()) {
-    // Session persistence + email-confirmation / password-reset return flow:
-    // when the user clicks the link in the confirmation email, the page opens
-    // and detectSessionInUrl signs them in — this listener refreshes the UI.
+    // Session persistence + email-confirmation / password-recovery return
+    // flow: detectSessionInUrl processes the link tokens in the URL.
     loveHubAuth.onAuthStateChange((event) => {
+        if (event === 'PASSWORD_RECOVERY') {
+            if (window.app?.openRecovery) {
+                window.app.openRecovery();
+            } else {
+                window.LoveHubPendingRecovery = true;
+            }
+            return;
+        }
         if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && window.app?.refreshAuthFromSupabase) {
             window.app.refreshAuthFromSupabase();
         }

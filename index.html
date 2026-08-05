@@ -208,6 +208,22 @@
             </div>
         </div>
 
+        <!-- Password Recovery Sheet (Phase 2.1) -->
+        <div class="login-overlay" id="recoveryOverlay">
+            <div class="login-sheet">
+                <div class="login-handle"></div>
+                <img src="assets/images/lovehub-icon.png" alt="LoveHub" class="logo-img logo-login" draggable="false">
+                <div class="login-title">Create New Password</div>
+                <div class="login-sub">Choose a new password for your account</div>
+                <div class="login-form">
+                    <input type="password" class="login-field" placeholder="New Password" id="recoveryPassword" autocomplete="new-password">
+                    <input type="password" class="login-field" placeholder="Confirm New Password" id="recoveryConfirm" autocomplete="new-password">
+                    <button class="login-submit" id="recoverySubmit">Update Password</button>
+                </div>
+                <button class="login-cancel" id="recoveryCancel">Cancel</button>
+            </div>
+        </div>
+
         <!-- Login Bottom Sheet -->
         <div class="login-overlay" id="loginOverlay">
             <div class="login-sheet">
@@ -328,8 +344,8 @@
     </div>
 
     <script src="icons.js"></script>
-    <!-- Supabase backend (Phase 1) — safe to load even before config.js exists -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <!-- Supabase backend (Phase 2.1) — vendored locally, no CDN dependency at runtime -->
+    <script src="assets/vendor/supabase-js/umd/supabase.js"></script>
     <script src="supabase/config.js" onerror="console.warn('supabase/config.js not found — copy supabase/config.example.js to supabase/config.js and fill in your keys')"></script>
     <script src="services/SupabaseService.js"></script>
     <script src="services/StorageService.js"></script>
