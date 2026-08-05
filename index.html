@@ -203,11 +203,13 @@
                 <div class="login-sub" id="loginSub">Login to your LoveHub account</div>
                 <div class="login-form">
                     <input type="text" class="login-field" placeholder="Display name" id="signupName" style="display:none;">
-                    <input type="text" class="login-field" placeholder="Username" id="loginUser">
-                    <input type="password" class="login-field" placeholder="Password" id="loginPass">
+                    <input type="email" class="login-field" placeholder="Email" id="signupEmail" style="display:none;" autocomplete="email">
+                    <input type="text" class="login-field" placeholder="Username" id="loginUser" autocomplete="username">
+                    <input type="password" class="login-field" placeholder="Password" id="loginPass" autocomplete="current-password">
                     <button class="login-submit" id="loginSubmit">Login</button>
                 </div>
                 <button class="login-switch-mode" id="loginSwitchMode">Don't have an account? Sign up</button>
+                <button class="login-switch-mode" id="forgotPasswordBtn" style="margin-top:-6px;font-size:13px;opacity:0.55">Forgot password?</button>
                 <button class="login-cancel" id="loginCancel">Cancel</button>
             </div>
         </div>

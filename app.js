@@ -10,18 +10,17 @@ class LoveHub {
             // Check existing session — prefer a real Supabase session, fall
             // back to the legacy local session so nothing breaks mid-migration.
             this.currentUser = authService.getCurrentUser();
-            if (supabaseService && supabaseService.ready) {
-                const sbUser = await supabaseService.getCurrentUser();
+            if (window.LoveHubAuth?.isReady()) {
+                const sbUser = await window.LoveHubAuth.getUser();
                 if (sbUser) {
-                    const profile = await supabaseService.getProfile(sbUser.id);
-                    if (profile) {
-                        this.currentUser = {
-                            id: sbUser.id,
-                            username: profile.username,
-                            name: profile.display_name,
-                            initial: profile.display_name[0]?.toUpperCase()
-                        };
+                    let profile = await window.LoveHubProfile.getProfile(sbUser.id);
+                    if (!profile) {
+                        profile = await window.LoveHubProfile.ensureProfile(sbUser.id, {
+                            username: sbUser.user_metadata?.username || sbUser.email?.split('@')[0],
+                            displayName: sbUser.user_metadata?.display_name
+                        });
                     }
+                    this.currentUser = window.LoveHubProfile.toAppUser(profile, sbUser);
                 }
             }
             this.setupSplash();
@@ -44,6 +43,25 @@ class LoveHub {
         } catch (error) {
             console.error('Init error:', error);
         }
+    }
+
+    // Called by the auth-state listener (src/main.js) when a Supabase session
+    // appears — e.g. right after the user clicks the email-confirmation link.
+    async refreshAuthFromSupabase() {
+        if (!window.LoveHubAuth?.isReady()) return;
+        const sbUser = await window.LoveHubAuth.getUser();
+        if (!sbUser) return;
+        let profile = await window.LoveHubProfile.getProfile(sbUser.id);
+        if (!profile) {
+            profile = await window.LoveHubProfile.ensureProfile(sbUser.id, {
+                username: sbUser.user_metadata?.username || sbUser.email?.split('@')[0],
+                displayName: sbUser.user_metadata?.display_name
+            });
+        }
+        this.currentUser = window.LoveHubProfile.toAppUser(profile, sbUser);
+        this.updateAuthUI();
+        this.renderProfile();
+        this.showToast('Welcome back ❤️');
     }
 
     setupSplash() {
@@ -580,35 +598,93 @@ class LoveHub {
         const cancelBtn = document.getElementById('loginCancel');
         const submitBtn = document.getElementById('loginSubmit');
         const switchModeBtn = document.getElementById('loginSwitchMode');
+        const forgotBtn = document.getElementById('forgotPasswordBtn');
         const nameField = document.getElementById('signupName');
+        const emailField = document.getElementById('signupEmail');
+        const userField = document.getElementById('loginUser');
+        const passField = document.getElementById('loginPass');
         const titleEl = document.getElementById('loginTitle');
         const subEl = document.getElementById('loginSub');
 
         let isSignupMode = false;
+        let forgotMode = false;
 
         const setMode = (signup) => {
             isSignupMode = signup;
             nameField.style.display = signup ? 'block' : 'none';
+            emailField.style.display = signup ? 'block' : 'none';
+            forgotBtn.style.display = signup ? 'none' : 'block';
             titleEl.textContent = signup ? 'Create Account' : 'Welcome Back';
             subEl.textContent = signup ? 'Join LoveHub' : 'Login to your LoveHub account';
             submitBtn.textContent = signup ? 'Sign Up' : 'Login';
             switchModeBtn.textContent = signup ? 'Already have an account? Login' : "Don't have an account? Sign up";
         };
 
+        // Restore the normal login/signup state after forgot-password mode.
+        const resetForgotMode = () => {
+            forgotMode = false;
+            userField.style.display = 'block';
+            passField.style.display = 'block';
+            emailField.style.display = isSignupMode ? 'block' : 'none';
+            emailField.placeholder = 'Email';
+            switchModeBtn.style.display = 'block';
+            forgotBtn.style.display = isSignupMode ? 'none' : 'block';
+        };
+
         switchModeBtn.addEventListener('click', () => setMode(!isSignupMode));
 
-        loginBtn.addEventListener('click', () => { setMode(false); overlay.classList.add('active'); });
+        // Forgot-password mode reuses the email field (login stays
+        // username-only; the reset email is where the real address is needed).
+        forgotBtn.addEventListener('click', () => {
+            forgotMode = true;
+            nameField.style.display = 'none';
+            userField.style.display = 'none';
+            passField.style.display = 'none';
+            emailField.style.display = 'block';
+            emailField.placeholder = 'Enter your email';
+            titleEl.textContent = 'Reset Password';
+            subEl.textContent = 'We will email you a reset link';
+            submitBtn.textContent = 'Send Reset Link';
+            switchModeBtn.style.display = 'none';
+            forgotBtn.style.display = 'none';
+        });
+
+        loginBtn.addEventListener('click', () => {
+            resetForgotMode();
+            setMode(false);
+            overlay.classList.add('active');
+        });
         cancelBtn.addEventListener('click', () => overlay.classList.remove('active'));
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
 
-        // Supabase requires an email; the app only asks for a username, so we
-        // derive a stable synthetic email per username. Users never see this.
-        const toEmail = (username) => `${username.toLowerCase().trim()}@lovehub.local`;
-
         submitBtn.addEventListener('click', async () => {
-            const username = document.getElementById('loginUser').value.trim();
-            const password = document.getElementById('loginPass').value;
+            const username = userField.value.trim();
+            const password = passField.value;
             const displayName = nameField.value.trim();
+            const email = emailField.value.trim();
+
+            // ---- forgot-password mode ----
+            if (forgotMode) {
+                if (!email || !email.includes('@')) {
+                    this.showToast('Please enter a valid email');
+                    return;
+                }
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Sending...';
+                const res = (window.LoveHubAuth?.isReady())
+                    ? await window.LoveHubAuth.resetPasswordForEmail(email)
+                    : { success: false, error: 'Backend not configured' };
+                submitBtn.disabled = false;
+                if (res.success) {
+                    this.showToast('Reset link sent — check your email');
+                    resetForgotMode();
+                    setMode(false);
+                } else {
+                    submitBtn.textContent = 'Send Reset Link';
+                    this.showToast(res.error || 'Could not send reset link');
+                }
+                return;
+            }
 
             if (!username || !password) {
                 this.showToast('Please enter credentials');
@@ -618,6 +694,10 @@ class LoveHub {
                 this.showToast('Please enter a display name');
                 return;
             }
+            if (isSignupMode && (!email || !email.includes('@'))) {
+                this.showToast('Please enter a valid email');
+                return;
+            }
 
             submitBtn.disabled = true;
             submitBtn.textContent = isSignupMode ? 'Creating account...' : 'Logging in...';
@@ -625,36 +705,44 @@ class LoveHub {
             let result;
 
             if (isSignupMode) {
-                result = (supabaseService && supabaseService.ready)
-                    ? await supabaseService.signUp(toEmail(username), password, username, displayName)
-                    : { success: false, error: 'Backend not configured yet' };
-
-                if (result.success) {
-                    this.showToast('Account created — check email to confirm, or try logging in.');
-                    setMode(false);
-                    submitBtn.disabled = false;
-                    setMode(false);
-                    return;
+                // Real email signup (Phase 1) — no more @lovehub.local.
+                if (window.LoveHubAuth?.isReady()) {
+                    const res = await window.LoveHubAuth.signUp({ email, password, username, displayName });
+                    if (res.success) {
+                        this.showToast(res.needsEmailConfirmation
+                            ? 'Account created — check your email to confirm your account.'
+                            : 'Account created — welcome to LoveHub ❤️');
+                        setMode(false);
+                        emailField.value = '';
+                        if (res.user) {
+                            this.currentUser = res.user;
+                            this.updateAuthUI();
+                            this.renderProfile();
+                        }
+                        submitBtn.disabled = false;
+                        return;
+                    }
+                    result = { success: false, error: res.error };
+                } else {
+                    result = { success: false, error: 'Backend not configured — demo accounts only' };
                 }
             } else {
-                // Try the real backend first; fall back to the legacy local
-                // accounts (Pourya/Sarina) so nothing breaks mid-migration.
-                if (supabaseService && supabaseService.ready) {
-                    const sbResult = await supabaseService.login(toEmail(username), password);
+                // Real Supabase login (by username -> remembered email). Falls
+                // back to the legacy demo accounts only when the username is
+                // not a Supabase account (or the backend is not configured).
+                const isSupabaseUsername = window.LoveHubAuth?.isReady() && window.LoveHubAuth.hasEmailFor(username);
+                if (isSupabaseUsername) {
+                    const sbResult = await window.LoveHubAuth.signInWithUsername(username, password);
                     if (sbResult.success) {
-                        const profile = await supabaseService.getProfile(sbResult.user.id);
-                        result = {
-                            success: true,
-                            user: {
-                                id: sbResult.user.id,
-                                username: profile?.username || username,
-                                name: profile?.display_name || username,
-                                initial: (profile?.display_name || username)[0]?.toUpperCase()
-                            }
-                        };
+                        const profile = await window.LoveHubProfile.getProfile(sbResult.user.id);
+                        result = { success: true, user: window.LoveHubProfile.toAppUser(profile, sbResult.user) };
+                    } else {
+                        // Needs-confirmation or wrong password — show the error,
+                        // never silently land on a demo account with the same name.
+                        result = { success: false, error: sbResult.error };
                     }
                 }
-                if (!result || !result.success) {
+                if (!result) {
                     result = authService.login(username, password);
                 }
             }
@@ -662,9 +750,10 @@ class LoveHub {
             if (result.success) {
                 this.currentUser = result.user;
                 overlay.classList.remove('active');
-                document.getElementById('loginUser').value = '';
-                document.getElementById('loginPass').value = '';
+                userField.value = '';
+                passField.value = '';
                 nameField.value = '';
+                emailField.value = '';
                 this.updateAuthUI();
                 this.renderProfile();
                 this.showToast('Login Successful ❤️');
@@ -676,9 +765,9 @@ class LoveHub {
             setMode(isSignupMode);
         });
 
-        logoutBtn.addEventListener('click', () => {
+        logoutBtn.addEventListener('click', async () => {
             if (confirm('Are you sure you want to logout?')) {
-                if (supabaseService && supabaseService.ready) supabaseService.logout();
+                if (window.LoveHubAuth?.isReady()) await window.LoveHubAuth.signOut();
                 authService.logout();
                 this.currentUser = null;
                 this.updateAuthUI();
@@ -791,7 +880,7 @@ class LoveHub {
         if (closePasswordBtn) closePasswordBtn.addEventListener('click', () => passwordModal.classList.remove('active'));
         passwordModal.addEventListener('click', (e) => { if (e.target === passwordModal) passwordModal.classList.remove('active'); });
         
-        submitPasswordBtn.addEventListener('click', () => {
+        submitPasswordBtn.addEventListener('click', async () => {
             const current = document.getElementById('currentPassword').value;
             const newPass = document.getElementById('newPassword').value;
             const confirm = document.getElementById('confirmPassword').value;
@@ -809,12 +898,24 @@ class LoveHub {
                 return;
             }
             
-            const result = authService.changePassword(this.currentUser.id, current, newPass);
-            if (result.success) {
-                passwordModal.classList.remove('active');
-                this.showToast('Password changed successfully');
+            if (window.LoveHubAuth?.isReady() && window.LoveHubAuth.isSupabaseUser()) {
+                // Real Supabase user — update via the Auth SDK.
+                const res = await window.LoveHubAuth.updatePassword(newPass);
+                if (res.success) {
+                    passwordModal.classList.remove('active');
+                    this.showToast('Password changed successfully');
+                } else {
+                    this.showToast(res.error || 'Could not change password');
+                }
             } else {
-                this.showToast(result.error);
+                // Legacy demo account.
+                const result = authService.changePassword(this.currentUser.id, current, newPass);
+                if (result.success) {
+                    passwordModal.classList.remove('active');
+                    this.showToast('Password changed successfully');
+                } else {
+                    this.showToast(result.error);
+                }
             }
         });
     }
