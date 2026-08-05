@@ -1,11 +1,6 @@
 // src/main.js
-// LoveHub ES-module boot entry (Phase 0: icons — Phase 1: auth —
-// Phase 2: couple system + onboarding — Phase 2.1: init diagnostics + recovery).
-//
-// Loaded from index.html as <script type="module" src="src/main.js">.
-// Module scripts run after HTML parsing, so DOM references below are safe.
-// Future phases add the router, services, and page modules to this boot
-// chain without touching the legacy scripts until each piece is verified.
+// LoveHub ES-module boot entry. The module owns the single Supabase auth
+// listener and publishes state changes to the legacy UI shell.
 
 import { installIcons } from './icons/IconService.js';
 import { AuthService } from './services/AuthService.js';
@@ -16,10 +11,6 @@ import { getInitStatus } from './services/SupabaseClient.js';
 
 installIcons();
 
-// Phase 1: real Supabase auth + profiles.
-// Phase 2: couple system + onboarding.
-// Phase 2.1: init diagnostics — the UI can show the REAL reason when the
-// backend is unavailable instead of silently falling back to demo mode.
 const loveHubAuth = new AuthService();
 const loveHubProfile = new ProfileService();
 const loveHubCouple = new CoupleService();
@@ -28,35 +19,46 @@ window.LoveHubProfile = loveHubProfile;
 window.LoveHubCouple = loveHubCouple;
 window.LoveHubOnboarding = new OnboardingFlow();
 window.LoveHubInit = getInitStatus();
-
-// Set when a password-recovery link arrives before the legacy app exists
-// (module scripts run before DOMContentLoaded). app.js checks it in init().
 window.LoveHubPendingRecovery = false;
 
+let appReady = false;
+const queuedEvents = [];
+
+function getApp() {
+    return window.app || null;
+}
+
+function dispatchAuthEvent(event, session) {
+    const app = getApp();
+    if (!appReady || !app) {
+        queuedEvents.push({ event, session });
+        if (event === 'PASSWORD_RECOVERY') window.LoveHubPendingRecovery = true;
+        return;
+    }
+
+    if (event === 'PASSWORD_RECOVERY') {
+        app.openRecovery?.();
+        return;
+    }
+    if (event === 'SIGNED_OUT') {
+        app.handleSignedOut?.();
+        return;
+    }
+    if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        app.handleSignedIn?.(session, event);
+    }
+}
+
+window.LoveHubMarkAppReady = (app) => {
+    if (app) window.app = app;
+    appReady = true;
+    const events = queuedEvents.splice(0);
+    for (const { event, session } of events) dispatchAuthEvent(event, session);
+};
+
 if (loveHubAuth.isReady()) {
-    // Session persistence + email-confirmation / password-recovery return
-    // flow: detectSessionInUrl processes the link tokens in the URL.
-    loveHubAuth.onAuthStateChange((event) => {
-        if (event === 'PASSWORD_RECOVERY') {
-            if (window.app?.openRecovery) {
-                window.app.openRecovery();
-            } else {
-                window.LoveHubPendingRecovery = true;
-            }
-            return;
-        }
-        if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && window.app?.refreshAuthFromSupabase) {
-            window.app.refreshAuthFromSupabase();
-        }
-        if (event === 'SIGNED_OUT' && window.app) {
-            window.app.currentUser = null;
-            window.app.currentProfile = null;
-            window.app.currentCouple = null;
-            window.app.updateAuthUI();
-            window.app.renderProfile();
-        }
-    });
-    // Seed the cached session on boot (also auto-signs-in when arriving from
-    // an email confirmation / recovery link).
-    loveHubAuth.getSession();
+    loveHubAuth.onAuthStateChange(dispatchAuthEvent);
+    // Supabase emits INITIAL_SESSION from its own auth client. This explicit
+    // read is only the shared boot promise; it does not create a second flow.
+    loveHubAuth.initialize();
 }
