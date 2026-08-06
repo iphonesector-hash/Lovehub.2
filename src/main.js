@@ -71,3 +71,14 @@ if (loveHubAuth.isReady()) {
     // read is only the shared boot promise; it does not create a second flow.
     loveHubAuth.initialize();
 }
+
+// Phase 3 — service worker: offline shell + asset caching (sw.js). Safe in
+// every modern browser (https or localhost); guarded so a missing SW API can
+// never break the app.
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch((err) => {
+            console.warn('[SW] registration failed:', err);
+        });
+    });
+}

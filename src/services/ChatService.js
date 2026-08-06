@@ -64,6 +64,23 @@ export class ChatService {
         return data || [];
     }
 
+    // Phase 4 — unread badge: count partner messages the current user has not
+    // read yet. RLS keeps this scoped to confirmed couple members. Returns 0
+    // on any error so the badge simply hides instead of breaking the UI.
+    async getUnreadCount(coupleId) {
+        const uid = await this._uid();
+        if (!this.isReady() || !coupleId || !uid) return 0;
+        const { count, error } = await supabaseClient
+            .from('messages')
+            .select('id', { count: 'exact', head: true })
+            .eq('couple_id', coupleId)
+            .neq('sender_id', uid)
+            .is('read_at', null)
+            .is('deleted_at', null);
+        if (error) return 0;
+        return count || 0;
+    }
+
     // ---------------- message mutations (RPCs) ----------------
 
     async sendMessage(coupleId, content, { replyToId = null } = {}) {

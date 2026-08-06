@@ -88,6 +88,7 @@ class LoveHub {
             if (generation !== this._authStateGeneration || !window.LoveHubAuth.session?.user) return;
             this.updateAuthUI();
             this.renderAll();
+            this.refreshChatUnreadBadge();
             if (!hadUser) this.showToast('Welcome back ❤️');
             this.onboardingDismissed = false;
             this.checkOnboarding();
@@ -132,6 +133,7 @@ class LoveHub {
         this._chatNotifPrefs = null;
         this.closeChatSheets();
         this.resetChatComposer();
+        this.setChatUnreadBadge(0);
         // Never leave a protected page visible after the session ends.
         if (this.currentPage !== 'home') this.navigateTo('home');
         if (!hadState) {
@@ -922,6 +924,30 @@ class LoveHub {
         if (this.isRealUser() && this.currentCouple?.status === 'active' && window.LoveHubChat) {
             window.LoveHubChat.markAsRead(this.currentCouple.id);
         }
+        // Opening the chat clears any unread badge.
+        this.setChatUnreadBadge(0);
+    }
+
+    // Phase 4 — unread chat badge on the Chat tab. Counts partner messages
+    // not yet read; hidden for signed-out / non-active couples and on error.
+    async refreshChatUnreadBadge() {
+        const badge = document.getElementById('chatUnreadBadge');
+        if (!badge) return;
+        if (!this.isRealUser() || this.currentCouple?.status !== 'active' || !window.LoveHubChat) {
+            this.setChatUnreadBadge(0);
+            return;
+        }
+        let count = await window.LoveHubChat.getUnreadCount(this.currentCouple.id);
+        if (this.currentPage === 'chat') count = 0; // visible chat = read
+        this.setChatUnreadBadge(count || 0);
+    }
+
+    setChatUnreadBadge(count) {
+        const badge = document.getElementById('chatUnreadBadge');
+        if (!badge) return;
+        const n = Math.max(0, count || 0);
+        badge.textContent = n > 99 ? '99+' : (n ? String(n) : '');
+        badge.hidden = n === 0;
     }
 
     bindChatScroll() {
@@ -1068,6 +1094,9 @@ class LoveHub {
                     window.LoveHubChat.markAsRead(coupleId);
                 } else {
                     this.notifyNewMessage(msg);
+                    // Bump the unread badge when a partner message arrives
+                    // outside the chat page.
+                    this.refreshChatUnreadBadge();
                 }
             }
         });

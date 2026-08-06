@@ -4,6 +4,17 @@ supabase/config.js
 .env.*
 !.env.example
 
+# Logs & debug output
+*.log
+logs/
+
+# Local config / temp files
+*.tmp
+*.swp
+*.swo
+.cache/
+Thumbs.db
+
 # Build / dependency artifacts
 dist/
 node_modules/

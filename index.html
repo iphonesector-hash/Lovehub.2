@@ -21,7 +21,7 @@
     <!-- Splash Screen -->
     <div id="splash">
         <div class="splash-logo">
-            <img src="assets/images/sector-logo.png" alt="SECTOR" class="logo-img logo-splash" draggable="false">
+            <picture><source type="image/webp" srcset="assets/images/sector-logo.webp"><img src="assets/images/sector-logo.png" alt="SECTOR" class="logo-img logo-splash" draggable="false"></picture>
             <div class="sector-text">SECTOR</div>
         </div>
     </div>
@@ -33,7 +33,7 @@
             <section class="page active" data-page="home">
                 <div class="home-header">
                     <div class="brand-mark">
-                        <img src="assets/images/lovehub-icon.png" alt="LoveHub" class="logo-img logo-brand" draggable="false">
+                        <picture><source type="image/webp" srcset="assets/images/lovehub-icon.webp"><img src="assets/images/lovehub-icon.png" alt="LoveHub" class="logo-img logo-brand" draggable="false"></picture>
                         <span class="brand-name">LoveHub</span>
                     </div>
                     <div class="greeting" id="greeting">Good evening</div>
@@ -242,7 +242,7 @@
         <div class="login-overlay" id="onboardingOverlay">
             <div class="login-sheet onboarding-sheet">
                 <div class="login-handle"></div>
-                <img src="assets/images/lovehub-icon.png" alt="LoveHub" class="logo-img logo-login" draggable="false">
+                <picture><source type="image/webp" srcset="assets/images/lovehub-icon.webp"><img src="assets/images/lovehub-icon.png" alt="LoveHub" class="logo-img logo-login" draggable="false"></picture>
                 <div class="login-title" id="onbTitle">Welcome to LoveHub</div>
                 <div class="login-sub" id="onbSub">Complete your profile to begin</div>
                 <div class="login-form" id="onbForm"></div>
@@ -254,7 +254,7 @@
         <div class="login-overlay" id="recoveryOverlay">
             <div class="login-sheet">
                 <div class="login-handle"></div>
-                <img src="assets/images/lovehub-icon.png" alt="LoveHub" class="logo-img logo-login" draggable="false">
+                <picture><source type="image/webp" srcset="assets/images/lovehub-icon.webp"><img src="assets/images/lovehub-icon.png" alt="LoveHub" class="logo-img logo-login" draggable="false"></picture>
                 <div class="login-title">Create New Password</div>
                 <div class="login-sub">Choose a new password for your account</div>
                 <div class="login-form">
@@ -270,7 +270,7 @@
         <div class="login-overlay" id="loginOverlay">
             <div class="login-sheet">
                 <div class="login-handle"></div>
-                <img src="assets/images/lovehub-icon.png" alt="LoveHub" class="logo-img logo-login" draggable="false">
+                <picture><source type="image/webp" srcset="assets/images/lovehub-icon.webp"><img src="assets/images/lovehub-icon.png" alt="LoveHub" class="logo-img logo-login" draggable="false"></picture>
                 <div class="login-title" id="loginTitle">Welcome Back</div>
                 <div class="login-sub" id="loginSub">Login to your LoveHub account</div>
                 <div class="login-form">
@@ -320,11 +320,11 @@
                     <div class="settings-section about-section">
                         <div class="section-title">About</div>
                         <div class="about-card glass-card">
-                            <img src="assets/images/lovehub-logo.png" alt="LoveHub" class="logo-img logo-about" draggable="false">
+                            <picture><source type="image/webp" srcset="assets/images/lovehub-logo.webp"><img src="assets/images/lovehub-logo.png" alt="LoveHub" class="logo-img logo-about" draggable="false"></picture>
                             <div class="about-text">LoveHub — A premium couples application.</div>
                             <div class="powered-by">
                                 <span>Powered by</span>
-                                <img src="assets/images/sector-logo.png" alt="SECTOR" class="logo-img logo-powered" draggable="false">
+                                <picture><source type="image/webp" srcset="assets/images/sector-logo.webp"><img src="assets/images/sector-logo.png" alt="SECTOR" class="logo-img logo-powered" draggable="false"></picture>
                             </div>
                         </div>
                     </div>
@@ -512,7 +512,7 @@
         <!-- Tab Bar -->
         <nav class="tab-bar">
             <button class="tab active" data-tab="home"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-house"/></svg></div><span class="tab-label">Home</span></button>
-            <button class="tab" data-tab="chat"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-message"/></svg></div><span class="tab-label">Chat</span></button>
+            <button class="tab" data-tab="chat"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-message"/></svg><span class="tab-badge" id="chatUnreadBadge" hidden></span></div><span class="tab-label">Chat</span></button>
             <button class="tab" data-tab="love"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-heart"/></svg></div><span class="tab-label">Love</span></button>
             <button class="tab" data-tab="games"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-gamepad"/></svg></div><span class="tab-label">Games</span></button>
             <button class="tab" data-tab="profile"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-person"/></svg></div><span class="tab-label">Profile</span></button>
@@ -524,12 +524,10 @@
     <!-- Supabase backend (Phase 2.1) — vendored locally, no CDN dependency at runtime -->
     <script src="assets/vendor/supabase-js/umd/supabase.js"></script>
     <script src="supabase/config.js" onerror="console.warn('supabase/config.js not found — copy supabase/config.example.js to supabase/config.js and fill in your keys')"></script>
-    <script src="services/SupabaseService.js"></script>
     <script src="services/StorageService.js"></script>
     <script src="services/AuthService.js"></script>
     <script src="services/UserService.js"></script>
     <script src="services/HealthService.js"></script>
-    <script src="services/LocalizationService.js"></script>
     <script src="data.js"></script>
     <script src="utils.js"></script>
     <script src="app.js"></script>
