@@ -962,56 +962,88 @@
         if (pfill) pfill.style.width = v + '%';
     };
 
+    // Disable / re-enable the composer send button during media uploads, so a
+    // user cannot fire a text message while media is being sent.
+    proto.setComposerBusy = function (busy) {
+        const btn = document.getElementById('sendBtn');
+        const input = document.getElementById('chatInput');
+        if (!btn) return;
+        const hasText = !!input && input.value.trim().length > 0;
+        btn.disabled = busy || !hasText;
+        btn.classList.toggle('sending', !!busy);
+    };
+
     proto.sendPendingMedia = async function () {
         const pending = this._pendingMedia;
-        if (!pending) return;
+        if (!pending || this._mediaBusy) return;
         const couple = this.currentCouple;
         if (!couple || couple.status !== 'active') { this.showToast('Chat not active'); return; }
-        let blob = pending.blob;
-        let caption = null;
-        if (pending.kind === 'image') {
-            const edited = await this.applyPendingImageEdits(pending);
-            if (edited) blob = edited.blob;
-            caption = (this._mediaEdit?.text || '').trim() || null;
-        }
-        this.setUploadUi(true, pending.kind === 'video' ? 'Uploading video…' : 'Uploading photo…');
-        const kind = pending.kind === 'video' ? 'videos' : 'images';
-        const up = await window.LoveHubChat?.uploadCoupleFile(couple.id, kind, blob, {
-            onProgress: (pct) => this.setUploadUi(true, null, pct)
-        });
-        if (!up?.success) {
+        const isVideo = pending.kind === 'video';
+        this._mediaBusy = true;
+        this.setComposerBusy(true);
+        try {
+            let blob = pending.blob;
+            let caption = null;
+            if (!isVideo) {
+                const edited = await this.applyPendingImageEdits(pending);
+                if (edited) blob = edited.blob;
+                caption = (this._mediaEdit?.text || '').trim() || null;
+            }
+            console.debug('[MEDIA_UPLOAD_START]', isVideo ? 'video' : 'image', blob.type || pending.mime, blob.size);
+            this.setUploadUi(true, isVideo ? 'Uploading video…' : 'Uploading image…');
+            const kind = isVideo ? 'videos' : 'images';
+            const up = await window.LoveHubChat?.uploadCoupleFile(couple.id, kind, blob, {
+                onProgress: (pct) => this.setUploadUi(true, null, pct)
+            });
+            if (!up?.success) {
+                console.debug('[MEDIA_UPLOAD_ERROR]', up?.error || 'Upload failed');
+                this.showToast(`Upload failed — ${up?.error || 'please try again'}`);
+                return; // preview stays open → press Send to retry
+            }
+            console.debug('[MEDIA_UPLOAD_SUCCESS]', up.path);
+
+            let thumbPath = null;
+            if (isVideo && pending.poster) {
+                const thumb = await window.LoveHubChat?.uploadCoupleFile(couple.id, 'images', pending.poster, {});
+                if (thumb?.success) thumbPath = thumb.path;
+            }
+
+            console.debug('[MESSAGE_INSERT_START]', isVideo ? 'video' : 'image');
+            const res = await window.LoveHubChat?.sendMediaMessage(couple.id, {
+                type: isVideo ? 'video' : 'image',
+                content: caption,
+                mediaUrl: up.path,
+                thumbnailUrl: thumbPath,
+                fileSize: pending.size,
+                duration: pending.duration || null,
+                metadata: {
+                    mime: pending.mime,
+                    name: pending.name,
+                    width: this._pendingMediaWidth || null,
+                    height: this._pendingMediaHeight || null
+                },
+                replyToId: this._chatReplyTo?.id || null
+            });
+            if (!res?.success) {
+                console.debug('[MESSAGE_INSERT_ERROR]', res?.error);
+                this.showToast(`Could not send — ${res?.error || 'please try again'}`);
+                return;
+            }
+            console.debug('[MESSAGE_INSERT_SUCCESS]', res.message?.id);
+            this._pendingMedia = null;
+            this._mediaEdit = null;
+            this.closeMediaPreview();
+            const msg = this.normalizeMessage(res.message);
+            this._chatMessages = [...this._chatMessages, msg];
+            this.appendMessageDom(msg);
+        } catch (err) {
+            console.debug('[MEDIA_UPLOAD_ERROR]', err && (err.message || err));
+            this.showToast(`Upload failed — ${(err && err.message) || 'please try again'}`);
+        } finally {
             this.setUploadUi(false);
-            this.showToast(up?.error || 'Upload failed');
-            return;
+            this.setComposerBusy(false);
+            this._mediaBusy = false;
         }
-        let thumbPath = null;
-        if (pending.kind === 'video' && pending.poster) {
-            const thumb = await window.LoveHubChat?.uploadCoupleFile(couple.id, 'images', pending.poster, {});
-            if (thumb?.success) thumbPath = thumb.path;
-        }
-        const res = await window.LoveHubChat?.sendMediaMessage(couple.id, {
-            type: pending.kind === 'video' ? 'video' : 'image',
-            content: caption,
-            mediaUrl: up.path,
-            thumbnailUrl: thumbPath,
-            fileSize: pending.size,
-            duration: pending.duration || null,
-            metadata: {
-                mime: pending.mime,
-                name: pending.name,
-                width: this._pendingMediaWidth || null,
-                height: this._pendingMediaHeight || null
-            },
-            replyToId: this._chatReplyTo?.id || null
-        });
-        this.setUploadUi(false);
-        this.closeMediaPreview();
-        this._pendingMedia = null;
-        this._mediaEdit = null;
-        if (!res?.success) { this.showToast(res?.error || 'Could not send'); return; }
-        const msg = this.normalizeMessage(res.message);
-        this._chatMessages = [...this._chatMessages, msg];
-        this.appendMessageDom(msg);
     };
 
     // ---- drawing & handwritten ----
@@ -1225,28 +1257,52 @@
         if (!this._draw || !this._draw.strokes.length) { this.showToast('Draw something first ❤️'); return; }
         const couple = this.currentCouple;
         if (!couple || couple.status !== 'active') { this.showToast('Chat not active'); return; }
+        if (this._mediaBusy) return;
+        this._mediaBusy = true;
+        this.setComposerBusy(true);
         const mode = this._draw.mode === 'write' ? 'handwritten' : 'drawing';
-        const canvas = document.getElementById('drawCanvas');
-        const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
-        let thumbPath = null;
-        if (blob) {
+        try {
+            const canvas = document.getElementById('drawCanvas');
+            const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+            if (!blob) { this.showToast('Could not export drawing'); return; }
+            console.debug('[MEDIA_UPLOAD_START]', mode, blob.type || 'image/png', blob.size);
             this.setUploadUi(true, 'Saving drawing…');
-            const up = await window.LoveHubChat?.uploadCoupleFile(couple.id, 'drawings', blob, {});
+            const up = await window.LoveHubChat?.uploadCoupleFile(couple.id, 'drawings', blob, {
+                onProgress: (pct) => this.setUploadUi(true, null, pct)
+            });
+            if (!up?.success) {
+                console.debug('[MEDIA_UPLOAD_ERROR]', up?.error || 'Upload failed');
+                this.showToast(`Upload failed — ${up?.error || 'please try again'}`);
+                return; // canvas stays open → press Send to retry
+            }
+            console.debug('[MEDIA_UPLOAD_SUCCESS]', up.path);
+
+            console.debug('[MESSAGE_INSERT_START]', mode);
+            const res = await window.LoveHubChat?.sendMediaMessage(couple.id, {
+                type: mode,
+                content: null,
+                thumbnailUrl: up.path,
+                metadata: { strokes: this._draw.strokes, mode, width: canvas.width, height: canvas.height },
+                replyToId: this._chatReplyTo?.id || null
+            });
+            if (!res?.success) {
+                console.debug('[MESSAGE_INSERT_ERROR]', res?.error);
+                this.showToast(`Could not send — ${res?.error || 'please try again'}`);
+                return;
+            }
+            console.debug('[MESSAGE_INSERT_SUCCESS]', res.message?.id);
+            overlay?.classList.remove('active');
+            const msg = this.normalizeMessage(res.message);
+            this._chatMessages = [...this._chatMessages, msg];
+            this.appendMessageDom(msg);
+        } catch (err) {
+            console.debug('[MEDIA_UPLOAD_ERROR]', err && (err.message || err));
+            this.showToast(`Upload failed — ${(err && err.message) || 'please try again'}`);
+        } finally {
             this.setUploadUi(false);
-            if (up?.success) thumbPath = up.path;
+            this.setComposerBusy(false);
+            this._mediaBusy = false;
         }
-        const res = await window.LoveHubChat?.sendMediaMessage(couple.id, {
-            type: mode,
-            content: null,
-            thumbnailUrl: thumbPath,
-            metadata: { strokes: this._draw.strokes, mode, width: canvas.width, height: canvas.height },
-            replyToId: this._chatReplyTo?.id || null
-        });
-        overlay?.classList.remove('active');
-        if (!res?.success) { this.showToast(res?.error || 'Could not send'); return; }
-        const msg = this.normalizeMessage(res.message);
-        this._chatMessages = [...this._chatMessages, msg];
-        this.appendMessageDom(msg);
     };
 
     // ---- stickers ----
@@ -1480,31 +1536,56 @@
     };
 
     proto.sendVoiceMessage = async function () {
+        if (this._composerBusy) { this.showToast('Wait for the current upload to finish'); return; }
         const v = this._voice;
-        const overlay = document.getElementById('voiceOverlay');
         if (!v || !v.blob) { this.showToast('Record a message first'); return; }
         const couple = this.currentCouple;
         if (!couple || couple.status !== 'active') { this.showToast('Chat not active'); return; }
         if (v.audio) v.audio.pause();
+        const blob = v.blob;
+        const duration = Math.round(v.duration || 0);
+        this.setComposerBusy(true);
         this.setUploadUi(true, 'Uploading voice message…');
-        const up = await window.LoveHubChat?.uploadCoupleFile(couple.id, 'audio', v.blob, {
-            onProgress: (pct) => this.setUploadUi(true, null, pct)
-        });
-        this.setUploadUi(false);
-        if (!up?.success) { this.showToast(up?.error || 'Upload failed'); return; }
-        const res = await window.LoveHubChat?.sendMediaMessage(couple.id, {
-            type: 'voice',
-            mediaUrl: up.path,
-            duration: Math.round(v.duration || 0),
-            fileSize: v.blob.size,
-            metadata: { mime: v.blob.type || 'audio/webm' },
-            replyToId: this._chatReplyTo?.id || null
-        });
-        overlay?.classList.remove('active');
-        if (!res?.success) { this.showToast(res?.error || 'Could not send'); return; }
-        const msg = this.normalizeMessage(res.message);
-        this._chatMessages = [...this._chatMessages, msg];
-        this.appendMessageDom(msg);
+        try {
+            console.debug('[MEDIA_UPLOAD_START]', 'audio', blob.size, blob.type || 'audio/webm');
+            const up = await window.LoveHubChat?.uploadCoupleFile(couple.id, 'audio', blob, {
+                onProgress: (pct) => this.setUploadUi(true, null, pct)
+            });
+            if (!up?.success) {
+                console.error('[MEDIA_UPLOAD_FAIL]', up?.error || 'upload failed');
+                this.closeVoiceSheet();
+                this.showToast(up?.error || 'Upload failed');
+                return;
+            }
+            console.debug('[MEDIA_UPLOAD_SUCCESS]', up.path);
+            console.debug('[MESSAGE_INSERT_START]', 'voice');
+            const res = await window.LoveHubChat?.sendMediaMessage(couple.id, {
+                type: 'voice',
+                mediaUrl: up.path,
+                duration,
+                fileSize: blob.size,
+                metadata: { mime: blob.type || 'audio/webm' },
+                replyToId: this._chatReplyTo?.id || null
+            });
+            if (!res?.success) {
+                console.error('[MESSAGE_INSERT_FAIL]', res?.error || 'insert failed');
+                this.closeVoiceSheet();
+                this.showToast(res?.error || 'Could not send');
+                return;
+            }
+            console.debug('[MESSAGE_INSERT_SUCCESS]', res.message?.id);
+            const msg = this.normalizeMessage(res.message);
+            this._chatMessages = [...this._chatMessages, msg];
+            this.appendMessageDom(msg);
+            this.scrollChatToBottom?.();
+        } catch (err) {
+            console.error('[MEDIA_UPLOAD_ERROR]', err);
+            this.showToast('Upload failed — try again');
+        } finally {
+            this.closeVoiceSheet();
+            this.setUploadUi(false);
+            this.setComposerBusy(false);
+        }
     };
 
     proto.drawWave = function (ctx, wave) {

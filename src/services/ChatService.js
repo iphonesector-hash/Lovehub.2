@@ -83,22 +83,58 @@ export class ChatService {
     // Upload a file for this couple. Storage RLS only permits confirmed
     // couple members to write into couples/{coupleId}/..., so a non-member
     // upload is rejected server-side.
+    //
+    // Phase 3.4 fix: this method NEVER throws and never accesses
+    // `file.name` on a plain Blob. Compressed images, canvas exports and
+    // MediaRecorder audio are Blobs WITHOUT a `.name`, so the previous
+    // `file.name.split('.')` raised a TypeError that left the UI stuck in
+    // "Uploading…". The extension now falls back to the MIME type / kind.
     async uploadCoupleFile(coupleId, kind, file, { onProgress = null } = {}) {
-        if (!this.isReady()) return { success: false, error: 'Backend not configured' };
-        const uid = await this._uid();
-        if (!uid || !coupleId || !file) return { success: false, error: 'Not signed in' };
-        const ext = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
-        const path = `couples/${coupleId}/${kind}/${crypto.randomUUID()}.${ext}`;
-        const { data, error } = await supabaseClient.storage
-            .from('couples-media')
-            .upload(path, file, {
-                cacheControl: '3600',
-                contentType: file.type || 'application/octet-stream',
-                upsert: false,
-                ...(onProgress ? { onUploadProgress: (e) => onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : 0) } : {})
-            });
-        if (error) return { success: false, error: error.message || 'Upload failed' };
-        return { success: true, path: data?.path || path };
+        try {
+            if (!this.isReady()) return { success: false, error: 'Backend not configured' };
+            const uid = await this._uid();
+            if (!uid || !coupleId || !file) return { success: false, error: 'Not signed in' };
+            if (file.size && file.size > 10485760) {
+                return { success: false, error: 'File too large (max 10 MB)' };
+            }
+            const ext = this._fileExtension(file, kind);
+            const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+            const path = `couples/${coupleId}/${kind}/${uuid}.${ext}`;
+            const { data, error } = await supabaseClient.storage
+                .from('couples-media')
+                .upload(path, file, {
+                    cacheControl: '3600',
+                    contentType: file.type || 'application/octet-stream',
+                    upsert: false,
+                    ...(onProgress ? { onUploadProgress: (e) => onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : 0) } : {})
+                });
+            if (error) return { success: false, error: error.message || 'Upload failed' };
+            return { success: true, path: data?.path || path };
+        } catch (err) {
+            return { success: false, error: (err && err.message) || 'Upload failed' };
+        }
+    }
+
+    // Safe extension for Files AND Blobs: File.name first (only a real
+    // extension, i.e. a dot), then the MIME subtype, then the folder kind.
+    _fileExtension(file, kind) {
+        const name = file.name || '';
+        const dotIdx = name.lastIndexOf('.');
+        const fromName = dotIdx > -1 ? name.slice(dotIdx + 1).toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+        if (fromName && fromName.length <= 8) return fromName;
+        const mime = (file.type || '').toLowerCase();
+        const mimeMap = {
+            'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+            'video/mp4': 'mp4', 'video/webm': 'webm',
+            'audio/webm': 'webm', 'audio/mp4': 'mp4', 'audio/mpeg': 'mp3'
+        };
+        if (mimeMap[mime]) return mimeMap[mime];
+        const sub = mime.split('/')[1];
+        if (sub && /^[a-z0-9]+$/.test(sub)) return sub.slice(0, 8);
+        const kindMap = { images: 'jpg', videos: 'mp4', audio: 'webm', drawings: 'png' };
+        return kindMap[kind] || 'bin';
     }
 
     // Server-checked signed URL (members only). Never expose raw paths.
