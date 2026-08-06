@@ -21,7 +21,7 @@ set -e
 
 rm -rf dist
 mkdir -p dist
-cp -r index.html style.css chat-rich.css app.js chat-rich.js data.js utils.js icons.js stickers.js assets services supabase src sw.js dist
+cp -r index.html style.css chat-rich.css chat-rich-fixes.css app.js chat-rich.js data.js utils.js icons.js stickers.js assets services supabase src sw.js dist
 
 if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
   printf 'const SUPABASE_CONFIG = { url: "%s", anonKey: "%s" };\n' \
