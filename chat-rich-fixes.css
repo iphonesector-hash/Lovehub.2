@@ -389,7 +389,14 @@
     from { transform: scale(1.05) translate3d(-1.2%, -0.8%, 0); }
     to { transform: scale(1.12) translate3d(1.2%, 0.8%, 0); }
 }
-.page[data-page="chat"] > * { position: relative; z-index: 1; }
+/* Phase 3.5 FIX — scope background layering to in-flow content ONLY.
+   NEVER apply position to `> *`: that overrides position:fixed on .chat-bar
+   (the composer) and .chat-scroll-btn, launching them mid-list and hiding
+   the composer. Fixed elements keep style.css's position:fixed + z-index
+   (50/60), which already sits above the z-index:0 background layer. */
+.page[data-page="chat"] .chat-head,
+.page[data-page="chat"] .chat-search,
+.page[data-page="chat"] .chat-list { position: relative; z-index: 1; }
 
 .page[data-page="chat"][data-bg="romantic"] { --chat-bg: linear-gradient(150deg, #43122b 0%, #311030 52%, #1b1033 100%); }
 .page[data-page="chat"][data-bg="soft"] {
