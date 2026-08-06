@@ -375,7 +375,11 @@
         wrap.className = 'bubble-media';
         const img = document.createElement('img');
         img.alt = 'Photo';
-        img.loading = 'lazy';
+        // Eager load on purpose: loading="lazy" combined with display:none
+        // would defer the fetch indefinitely (a hidden element has no layout
+        // box, so it is never "near the viewport") and the image would never
+        // appear. Eager images fetch even while hidden, then onload restores
+        // visibility — this was the image-never-renders bug.
         img.style.display = 'none'; // shown once the image actually loads
         img.addEventListener('click', () => this.openMediaViewer(msg, 'image'));
         wrap.appendChild(this.mediaLoadingEl());
@@ -603,11 +607,18 @@
                 audio.playbackRate = rate;
                 audio.onended = () => { setBtn(false); paint(); };
                 audio.onpause = () => { if (!seekDragging) { setBtn(false); paint(); } };
+                // Genuine media failure (bad/expired URL, unsupported codec,
+                // network). Log the exact MediaError code+message, drop the
+                // broken instance and cached URL so the next tap mints a fresh
+                // signed URL and rebuilds — a real retry, never a silent blank.
                 audio.onerror = () => {
+                    const me = audio && audio.error;
+                    console.warn('[MEDIA_RENDER][voice] audio error', msg && msg.id,
+                        me ? ('code=' + me.code + ' ' + (me.message || 'media error')) : 'no MediaError');
                     setBtn(false);
                     this.invalidateMediaUrl(msg.media_url);
-                    time.textContent = 'Playback failed';
-                    this.showToast('Voice message unavailable');
+                    time.textContent = 'Playback failed — tap to retry';
+                    this.showToast('Voice playback failed');
                     audio = null;
                 };
                 audio.ontimeupdate = paint;
@@ -619,13 +630,28 @@
                 ensureAudio(() => {
                     audio.play()
                         .then(() => setBtn(true))
-                        .catch(() => { audio = null; });
+                        .catch((err) => {
+                            // Never swallow: log the rejection and KEEP the audio
+                            // instance alive. The first async play() can be
+                            // rejected (e.g. NotAllowedError on iOS Safari when
+                            // the element was created outside the tap gesture) —
+                            // the next tap then calls play() inside a real user
+                            // gesture and succeeds.
+                            console.warn('[MEDIA_RENDER][voice] play() rejected', msg && msg.id,
+                                err && (err.name + ': ' + err.message));
+                            time.textContent = 'Tap to retry';
+                        });
                 });
             } else if (playing) {
                 audio.pause();
             } else {
-                audio.play();
-                setBtn(true);
+                audio.play()
+                    .then(() => setBtn(true))
+                    .catch((err) => {
+                        console.warn('[MEDIA_RENDER][voice] play() rejected', msg && msg.id,
+                            err && (err.name + ': ' + err.message));
+                        time.textContent = 'Tap to retry';
+                    });
             }
         });
         speed.addEventListener('click', () => {
