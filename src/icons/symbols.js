@@ -68,7 +68,21 @@ export const ICONS = {
     more: { viewBox: NS_VIEWBOX, filled: true, body: '<circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle><circle cx="5" cy="12" r="1.6"></circle>' },
     reply: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="9 17 4 12 9 7"></polyline><path d="M20 18v-2a4 4 0 0 0-4-4H4"></path>' },
     chevronDown: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="6 9 12 15 18 9"></polyline>' },
-    check: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="20 6 9 17 4 12"></polyline>' }
+    check: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="20 6 9 17 4 12"></polyline>' },
+    // Phase 3.2 — rich media + chat polish icons
+    mic: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line>' },
+    brush: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"></path><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"></path>' },
+    smile: { viewBox: NS_VIEWBOX, filled: false, body: '<circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line>' },
+    video: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M23 7l-7 5 7 5V7z"></path><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>' },
+    sparkles: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3z"></path>' },
+    pause: { viewBox: NS_VIEWBOX, filled: true, body: '<rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect>' },
+    volume: { viewBox: NS_VIEWBOX, filled: false, body: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>' },
+    plus: { viewBox: NS_VIEWBOX, filled: false, body: '<line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>' },
+    eraser: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M7 21a4 4 0 0 1-4-4c0-1.1.4-2.1 1.1-2.9l9.9-10.4a2.83 2.83 0 0 1 4 0l3.4 3.4a2.83 2.83 0 0 1 0 4l-10 10.6A4 4 0 0 1 9.8 21H7z"></path><line x1="2" y1="21" x2="22" y2="21"></line>' },
+    undo: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>' },
+    redo: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>' },
+    image: { viewBox: NS_VIEWBOX, filled: false, body: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline>' },
+    magic: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M12 3v4m0 10v4m9-9h-4M7 12H3m14.5-6.5l-2.8 2.8m-7.4 7.4l-2.8 2.8m12.1 0l-2.8-2.8m-7.4-7.4l-2.8-2.8"></path>' }
 };
 
 export const ICON_NAMES = Object.freeze(Object.keys(ICONS));
