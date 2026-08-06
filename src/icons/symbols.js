@@ -58,6 +58,7 @@ export const ICONS = {
     moon: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>' },
     aurora: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M2 8c3-4 6 4 9 0s5-3 6-1" stroke-opacity="0.9"></path><path d="M2 12c3-4 6 4 9 0s5-3 6-1" stroke-opacity="0.55"></path><path d="M2 16c3-4 6 4 9 0s5-3 6-1" stroke-opacity="0.3"></path>' },
     download: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line>' },
+    share: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line>' },
     upload: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line>' },
     trash: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>' },
 

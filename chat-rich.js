@@ -56,6 +56,7 @@
         // Composer-overlap fix: hide the global FABs + mini player on the
         // chat page so they can never cover the composer or send button.
         document.body.classList.toggle('chat-open', this.currentPage === 'chat');
+        if (this.currentPage === 'chat') this.applyChatBackground();
         if (this.currentPage !== 'chat') this.setChatKeyboardInset(0);
     });
 
@@ -80,7 +81,7 @@
         this.closeAllSheets();
         this.stopMusic();
         this._pendingMedia = null;
-        this._mediaUrlCache = {};
+        this._mediaUrlCache = new Map();
         this.setUploadUi(false);
     });
 
@@ -89,7 +90,7 @@
         this.closeAllSheets();
         this.stopMusic();
         this._pendingMedia = null;
-        this._mediaUrlCache = {};
+        this._mediaUrlCache = new Map();
     });
 
     wrap(proto, 'resetChatComposer', function () {
@@ -109,10 +110,13 @@
     wrap(proto, 'loadChat', function () {
         this._chatSoundEnabled = this._chatPrefs?.sounds_enabled !== false;
         this._chatSoundTheme = this._chatPrefs?.sound_theme || 'romantic';
+        this._chatBackground = this._chatPrefs?.background || 'aurora';
+        this._chatBgMode = this._chatPrefs?.background_mode || 'static';
         if (window.LoveHubSounds) {
             window.LoveHubSounds.setEnabled(this._chatSoundEnabled);
             window.LoveHubSounds.setTheme(this._chatSoundTheme);
         }
+        this.applyChatBackground();
     });
 
     // =====================================================================
@@ -240,10 +244,26 @@
 
     proto.getSignedMediaUrl = async function (path) {
         if (!path) return null;
-        if (this._mediaUrlCache[path]) return this._mediaUrlCache[path];
-        const p = window.LoveHubChat ? window.LoveHubChat.getMediaUrl(path) : Promise.resolve(null);
-        this._mediaUrlCache[path] = p.then((url) => url || null);
-        return this._mediaUrlCache[path];
+        const cached = this._mediaUrlCache.get(path);
+        if (cached && cached.exp > Date.now()) return cached.url;
+        const p = (window.LoveHubChat ? window.LoveHubChat.getMediaUrl(path) : Promise.resolve(null))
+            .then((url) => {
+                if (!url) return null;
+                // storage.create_signed_url hands back a full URL on current
+                // Supabase; older hosts may return a bare path — absolutize it
+                // against the configured Supabase origin so media always loads.
+                if (url.charAt(0) === '/') {
+                    const base = (typeof SUPABASE_CONFIG !== 'undefined' && SUPABASE_CONFIG.url) || '';
+                    return base ? base.replace(/\/$/, '') + url : null;
+                }
+                return url;
+            });
+        // Signed URLs expire after 3600s server-side — never cache longer.
+        this._mediaUrlCache.set(path, { url: p, exp: Date.now() + 50 * 60 * 1000 });
+        if (this._mediaUrlCache.size > 150) {
+            this._mediaUrlCache.delete(this._mediaUrlCache.keys().next().value);
+        }
+        return p;
     };
 
     proto.formatDuration = function (sec) {
@@ -298,13 +318,15 @@
         video.controls = false;
         video.preload = 'metadata';
         video.playsInline = true;
+        video.muted = true;
+        video.loop = true;
         video.addEventListener('click', () => this.openMediaViewer(msg, 'video'));
         wrap.appendChild(video);
         const play = document.createElement('button');
         play.className = 'video-play-btn';
         play.innerHTML = '<svg class="icon-svg"><use href="#icon-play"/></svg>';
         const togglePlay = () => {
-            if (video.paused) { video.play(); play.style.display = 'none'; }
+            if (video.paused) { video.play().catch(() => {}); play.style.display = 'none'; }
             else { video.pause(); play.style.display = ''; }
         };
         play.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
@@ -316,7 +338,36 @@
             badge.textContent = this.formatDuration(msg.duration);
             wrap.appendChild(badge);
         }
-        this.getSignedMediaUrl(msg.media_url).then((url) => { if (url) video.src = url; });
+        const meta = msg.metadata || {};
+        const trim = meta.trim && meta.trim.end > (meta.trim.start || 0) ? meta.trim : null;
+        this.getSignedMediaUrl(msg.media_url).then((url) => {
+            if (!url) return;
+            video.src = url;
+            if (trim) {
+                video.onloadedmetadata = () => { video.currentTime = trim.start; video.onloadedmetadata = null; };
+                video.ontimeupdate = () => {
+                    if (video.currentTime >= trim.end) {
+                        video.pause();
+                        video.currentTime = trim.start;
+                        play.style.display = '';
+                    }
+                };
+            }
+            // Telegram-style: quietly loop the clip while it is on screen.
+            if ('IntersectionObserver' in window) {
+                const io = new IntersectionObserver((entries) => {
+                    entries.forEach((en) => {
+                        if (en.isIntersecting) {
+                            video.play().catch(() => {});
+                            io.unobserve(video);
+                        } else {
+                            video.pause();
+                        }
+                    });
+                }, { threshold: 0.35 });
+                io.observe(video);
+            }
+        });
         this.getSignedMediaUrl(msg.thumbnail_url).then((url) => { if (url) video.poster = url; });
         block.appendChild(wrap);
         if (msg.text) {
@@ -334,27 +385,38 @@
         const btn = document.createElement('button');
         btn.className = 'voice-play-btn';
         btn.innerHTML = '<svg class="icon-svg"><use href="#icon-play"/></svg>';
+        const mid = document.createElement('div');
+        mid.className = 'voice-mid';
         const bars = document.createElement('div');
         bars.className = 'voice-bars';
-        for (let i = 0; i < 26; i++) {
+        const N = 34;
+        for (let i = 0; i < N; i++) {
             const b = document.createElement('i');
-            b.style.height = (6 + Math.abs(Math.sin(i * 1.7)) * 18) + 'px';
+            b.style.height = (6 + Math.abs(Math.sin(i * 1.7)) * 18 + Math.abs(Math.sin(i * 0.9)) * 8) + 'px';
             bars.appendChild(b);
         }
+        const seek = document.createElement('div');
+        seek.className = 'voice-seek';
+        const fill = document.createElement('div');
+        fill.className = 'voice-seek-fill';
+        seek.appendChild(fill);
         const time = document.createElement('span');
         time.className = 'voice-time';
-        time.textContent = msg.duration ? this.formatDuration(msg.duration) : '0:00';
         const speed = document.createElement('button');
         speed.className = 'voice-speed-btn';
         speed.textContent = '1x';
+        mid.appendChild(bars);
+        mid.appendChild(seek);
+        mid.appendChild(time);
         wrap.appendChild(btn);
-        wrap.appendChild(bars);
-        wrap.appendChild(time);
+        wrap.appendChild(mid);
         wrap.appendChild(speed);
 
+        const total = Math.max(0, Math.round(msg.duration || 0));
         let audio = null;
         let playing = false;
         let rate = 1;
+        let seekDragging = false;
         const setBtn = (p) => {
             playing = p;
             btn.classList.toggle('playing', p);
@@ -363,14 +425,23 @@
                 ? '<svg class="icon-svg"><use href="#icon-pause"/></svg>'
                 : '<svg class="icon-svg"><use href="#icon-play"/></svg>';
         };
+        const paint = () => {
+            const cur = audio ? audio.currentTime : 0;
+            const frac = total > 0 ? Math.min(1, cur / total) : 0;
+            fill.style.width = (frac * 100) + '%';
+            time.textContent = `${this.formatDuration(cur)} / ${this.formatDuration(total)}`;
+            const active = Math.round(frac * N);
+            Array.from(bars.children).forEach((b, i) => b.classList.toggle('on', i < active));
+        };
         btn.addEventListener('click', () => {
             if (!audio) {
                 this.getSignedMediaUrl(msg.media_url).then((url) => {
                     if (!url) { this.showToast('Voice message unavailable'); return; }
                     audio = new Audio(url);
                     audio.playbackRate = rate;
-                    audio.onended = () => setBtn(false);
-                    audio.onpause = () => setBtn(false);
+                    audio.onended = () => { setBtn(false); paint(); };
+                    audio.onpause = () => { if (!seekDragging) { setBtn(false); paint(); } };
+                    audio.ontimeupdate = paint;
                     audio.play();
                     setBtn(true);
                 });
@@ -387,6 +458,22 @@
             speed.textContent = rate + 'x';
             if (audio) audio.playbackRate = rate;
         });
+        const seekTo = (e) => {
+            if (!audio) return;
+            const rect = seek.getBoundingClientRect();
+            const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+            audio.currentTime = frac * total;
+            paint();
+        };
+        seek.addEventListener('pointerdown', (e) => {
+            seekDragging = true;
+            seek.setPointerCapture && seek.setPointerCapture(e.pointerId);
+            seekTo(e);
+        });
+        seek.addEventListener('pointermove', (e) => { if (seekDragging) seekTo(e); });
+        seek.addEventListener('pointerup', (e) => { seekDragging = false; seekTo(e); });
+        seek.addEventListener('pointercancel', () => { seekDragging = false; });
+        paint();
         return wrap;
     };
 
@@ -487,19 +574,161 @@
         stage.innerHTML = '';
         const url = await this.getSignedMediaUrl(msg.media_url);
         if (!url) { this.showToast('Media unavailable'); return; }
+        const frame = document.createElement('div');
+        frame.className = 'viewer-media';
+        const meta = msg.metadata || {};
+        const trim = meta.trim && meta.trim.end > (meta.trim.start || 0) ? meta.trim : null;
+
         if (kind === 'video') {
             const v = document.createElement('video');
             v.src = url;
             v.controls = true;
-            v.autoplay = true;
             v.playsInline = true;
-            stage.appendChild(v);
+            v.autoplay = true;
+            v.muted = !!meta.muted;
+            v.onloadedmetadata = () => { if (trim) v.currentTime = trim.start; };
+            v.ontimeupdate = () => {
+                if (trim && v.currentTime >= trim.end) { v.pause(); v.currentTime = trim.start; }
+            };
+            frame.appendChild(v);
         } else {
             const img = document.createElement('img');
             img.src = url;
-            stage.appendChild(img);
+            img.alt = 'Photo';
+            frame.appendChild(img);
+            this.attachViewerGestures(frame, img, viewer);
         }
+
+        // Action bar: save + share (media messages only).
+        const bar = document.createElement('div');
+        bar.className = 'viewer-actions';
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'viewer-act';
+        saveBtn.innerHTML = '<svg class="icon-svg"><use href="#icon-download"/></svg><span>Save</span>';
+        saveBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            try {
+                const res = await fetch(url);
+                const blob = await res.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'lovehub-media';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+            } catch (err) {
+                window.open(url, '_blank');
+            }
+        });
+        bar.appendChild(saveBtn);
+        if (navigator.share) {
+            const shareBtn = document.createElement('button');
+            shareBtn.type = 'button';
+            shareBtn.className = 'viewer-act';
+            shareBtn.innerHTML = '<svg class="icon-svg"><use href="#icon-share"/></svg><span>Share</span>';
+            shareBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                try { await navigator.share({ title: 'LoveHub', url }); } catch (err) { /* user cancelled */ }
+            });
+            bar.appendChild(shareBtn);
+        }
+        stage.appendChild(frame);
+        stage.appendChild(bar);
         viewer.classList.add('active');
+        const closeBtn = document.getElementById('mediaViewerClose');
+        if (closeBtn) closeBtn.focus();
+    };
+
+    // Pinch / double-tap zoom + drag-down-to-close for the fullscreen viewer.
+    proto.attachViewerGestures = function (frame, img, viewer) {
+        let zoom = 1;
+        let tx = 0;
+        let ty = 0;
+        let pinchDist = 0;
+        let dragStart = null;
+        let lastTap = 0;
+        const pointers = new Map();
+        const apply = (smooth) => {
+            frame.style.transition = smooth ? 'transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1)' : 'none';
+            frame.style.transform = `translate(${tx}px, ${ty}px) scale(${zoom})`;
+        };
+        const onWheel = (e) => {
+            e.preventDefault();
+            zoom = Math.min(4, Math.max(1, zoom - e.deltaY * 0.002));
+            tx = Math.min(zoom * 80, Math.max(-zoom * 80, tx));
+            ty = Math.min(zoom * 120, Math.max(-zoom * 120, ty));
+            apply(false);
+        };
+        const onDown = (e) => {
+            pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (pointers.size === 2) {
+                const [a, b] = [...pointers.values()];
+                pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+                dragStart = null;
+                return;
+            }
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            dragStart = { x: e.clientX - tx, y: e.clientY - ty, id: e.pointerId, t: Date.now() };
+        };
+        const onMove = (e) => {
+            if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (pointers.size === 2 && pinchDist > 0) {
+                const [a, b] = [...pointers.values()];
+                const d = Math.hypot(a.x - b.x, a.y - b.y);
+                zoom = Math.min(4, Math.max(1, zoom * (d / pinchDist)));
+                pinchDist = d;
+                apply(false);
+                return;
+            }
+            if (!dragStart || dragStart.id !== e.pointerId) return;
+            if (zoom > 1) {
+                tx = e.clientX - dragStart.x;
+                ty = e.clientY - dragStart.y;
+                apply(false);
+            } else {
+                const dy = e.clientY - (dragStart.y + ty);
+                if (dy > 3) {
+                    ty = dy;
+                    frame.style.opacity = Math.max(0.35, 1 - Math.abs(ty) / 420);
+                    apply(false);
+                }
+            }
+        };
+        const onUp = (e) => {
+            pointers.delete(e.pointerId);
+            if (pointers.size < 2) pinchDist = 0;
+            if (!dragStart || dragStart.id !== e.pointerId) return;
+            const now = Date.now();
+            const dy = e.clientY - (dragStart.y + ty);
+            if (now - dragStart.t < 260 && Math.abs(dy) < 10) {
+                if (now - lastTap < 320) {
+                    lastTap = 0;
+                    if (zoom > 1) { zoom = 1; tx = 0; ty = 0; }
+                    else { zoom = 2.4; tx = 0; ty = 0; }
+                    apply(true);
+                    return;
+                }
+                lastTap = now;
+                dragStart = null;
+                return;
+            }
+            dragStart = null;
+            if (Math.abs(dy) > 110) {
+                frame.style.opacity = 1;
+                viewer.classList.remove('active');
+                return;
+            }
+            tx = 0; ty = 0;
+            apply(true);
+            frame.style.opacity = 1;
+        };
+        frame.addEventListener('wheel', onWheel, { passive: false });
+        frame.addEventListener('pointerdown', onDown);
+        frame.addEventListener('pointermove', onMove);
+        frame.addEventListener('pointerup', onUp);
+        frame.addEventListener('pointercancel', onUp);
     };
 
     // =====================================================================
@@ -516,7 +745,7 @@
     wrap(proto, 'appendMessageDom', function (value, args) {
         const msg = args && args[0];
         if (!msg || this.currentPage !== 'chat') return;
-        if (msg.sender_id === this.currentUser?.id) window.LoveHubSounds?.play('send');
+        if (msg.sender_id === this.currentUser?.id) window.LoveHubSounds?.play('send', { dedupeKey: msg.id });
         this.maybeMessageEffect(msg);
     });
 
@@ -566,46 +795,95 @@
     // Chat settings — Sounds section
     // =====================================================================
 
+    proto.applyChatBackground = function () {
+        const page = document.getElementById('chatPage');
+        if (!page) return;
+        page.setAttribute('data-bg', this._chatBackground || 'aurora');
+        page.setAttribute('data-bg-mode', this._chatBgMode || 'static');
+    };
+
     wrap(proto, 'openChatSettings', function () {
         const body = document.getElementById('csBody');
         if (!body) return;
         const enabled = this._chatSoundEnabled !== false;
         const soundTheme = this._chatSoundTheme || 'romantic';
-        const soundsHtml = `
-            <div class="cs-section">
-                <div class="cs-section-title">Sounds</div>
-                <div class="cs-toggle">
-                    <div><div class="lbl">Chat sounds</div><div class="sub">Soft send & receive chimes</div></div>
-                    <button class="switch ${enabled ? 'on' : ''}" id="csSoundsSwitch"></button>
-                </div>
-                <div class="theme-grid">${['romantic', 'premium', 'night'].map((t) =>
-                    `<button class="theme-cell ${t}${t === soundTheme ? ' active' : ''}" data-sound="${t}">${t[0].toUpperCase()}${t.slice(1)}</button>`).join('')}
-                </div>
-            </div>`;
-        const stats = body.querySelector('.cs-section:last-of-type');
-        if (stats) stats.insertAdjacentHTML('beforebegin', soundsHtml);
-        else body.insertAdjacentHTML('beforeend', soundsHtml);
+        const background = this._chatBackground || 'aurora';
+        const bgMode = this._chatBgMode || 'static';
+        const BG_THEMES = [
+            ['romantic', '❤️', 'Romantic'], ['soft', '🌸', 'Soft'], ['moonlight', '🌙', 'Moonlight'],
+            ['aurora', '✨', 'Aurora'], ['clouds', '☁️', 'Clouds'], ['sunset', '🌅', 'Sunset'],
+            ['autumn', '🍂', 'Autumn'], ['ocean', '🌊', 'Ocean'], ['stars', '💫', 'Stars'],
+            ['minimal', '🕊', 'Minimal']
+        ];
+        // Idempotent render: settings can open many times.
+        if (!body.querySelector('[data-cs-section="sounds"]')) {
+            const soundsHtml = `
+                <div class="cs-section" data-cs-section="sounds">
+                    <div class="cs-section-title">Sounds</div>
+                    <div class="cs-toggle">
+                        <div><div class="lbl">Chat sounds</div><div class="sub">Soft send & receive chimes</div></div>
+                        <button class="switch ${enabled ? 'on' : ''}" id="csSoundsSwitch"></button>
+                    </div>
+                    <div class="theme-grid">${['romantic', 'premium', 'night'].map((t) =>
+                        `<button class="theme-cell ${t}${t === soundTheme ? ' active' : ''}" data-sound="${t}">${t[0].toUpperCase()}${t.slice(1)}</button>`).join('')}
+                    </div>
+                </div>`;
+            const stats = body.querySelector('.cs-section:last-of-type');
+            if (stats) stats.insertAdjacentHTML('beforebegin', soundsHtml);
+            else body.insertAdjacentHTML('beforeend', soundsHtml);
 
-        const switchEl = document.getElementById('csSoundsSwitch');
-        if (switchEl) {
-            switchEl.addEventListener('click', async () => {
-                this._chatSoundEnabled = !this._chatSoundEnabled;
-                switchEl.classList.toggle('on', this._chatSoundEnabled);
-                window.LoveHubSounds?.setEnabled(this._chatSoundEnabled);
-                const res = await window.LoveHubChat?.saveChatPreferences({ sounds_enabled: this._chatSoundEnabled });
-                if (!res?.success) this.showToast(res?.error || 'Could not save sound preference');
+            const switchEl = document.getElementById('csSoundsSwitch');
+            if (switchEl) {
+                switchEl.addEventListener('click', async () => {
+                    this._chatSoundEnabled = !this._chatSoundEnabled;
+                    switchEl.classList.toggle('on', this._chatSoundEnabled);
+                    window.LoveHubSounds?.setEnabled(this._chatSoundEnabled);
+                    const res = await window.LoveHubChat?.saveChatPreferences({ sounds_enabled: this._chatSoundEnabled });
+                    if (!res?.success) this.showToast(res?.error || 'Could not save sound preference');
+                });
+            }
+            body.querySelectorAll('[data-sound]').forEach((cell) => {
+                cell.addEventListener('click', async () => {
+                    this._chatSoundTheme = cell.dataset.sound;
+                    window.LoveHubSounds?.setTheme(this._chatSoundTheme);
+                    body.querySelectorAll('[data-sound]').forEach((c) => c.classList.toggle('active', c.dataset.sound === this._chatSoundTheme));
+                    window.LoveHubSounds?.play('send');
+                    const res = await window.LoveHubChat?.saveChatPreferences({ sound_theme: this._chatSoundTheme });
+                    if (!res?.success) this.showToast(res?.error || 'Could not save sound theme');
+                });
             });
         }
-        body.querySelectorAll('[data-sound]').forEach((cell) => {
-            cell.addEventListener('click', async () => {
-                this._chatSoundTheme = cell.dataset.sound;
-                window.LoveHubSounds?.setTheme(this._chatSoundTheme);
-                body.querySelectorAll('[data-sound]').forEach((c) => c.classList.toggle('active', c.dataset.sound === this._chatSoundTheme));
-                window.LoveHubSounds?.play('send');
-                const res = await window.LoveHubChat?.saveChatPreferences({ sound_theme: this._chatSoundTheme });
-                if (!res?.success) this.showToast(res?.error || 'Could not save sound theme');
+        if (!body.querySelector('[data-cs-section="background"]')) {
+            const bgHtml = `
+                <div class="cs-section" data-cs-section="background">
+                    <div class="cs-section-title">Chat Background</div>
+                    <div class="bg-grid">${BG_THEMES.map(([id, em, name]) =>
+                        `<button class="bg-cell bg-${id}${id === background ? ' active' : ''}" data-bg="${id}" title="${name}"><span>${em}</span><small>${name}</small></button>`).join('')}
+                    </div>
+                    <div class="bg-modes">${['static', 'blur', 'animated'].map((m) =>
+                        `<button class="bg-mode${m === bgMode ? ' active' : ''}" data-mode="${m}">${m[0].toUpperCase()}${m.slice(1)}</button>`).join('')}
+                    </div>
+                </div>`;
+            body.insertAdjacentHTML('beforeend', bgHtml);
+            body.querySelectorAll('[data-bg]').forEach((cell) => {
+                cell.addEventListener('click', async () => {
+                    this._chatBackground = cell.dataset.bg;
+                    body.querySelectorAll('[data-bg]').forEach((c) => c.classList.toggle('active', c.dataset.bg === this._chatBackground));
+                    this.applyChatBackground();
+                    const res = await window.LoveHubChat?.saveChatPreferences({ background: this._chatBackground });
+                    if (!res?.success) this.showToast(res?.error || 'Could not save background');
+                });
             });
-        });
+            body.querySelectorAll('[data-mode]').forEach((cell) => {
+                cell.addEventListener('click', async () => {
+                    this._chatBgMode = cell.dataset.mode;
+                    body.querySelectorAll('[data-mode]').forEach((c) => c.classList.toggle('active', c.dataset.mode === this._chatBgMode));
+                    this.applyChatBackground();
+                    const res = await window.LoveHubChat?.saveChatPreferences({ background_mode: this._chatBgMode });
+                    if (!res?.success) this.showToast(res?.error || 'Could not save background mode');
+                });
+            });
+        }
     });
 
     // =====================================================================
@@ -613,6 +891,11 @@
     // =====================================================================
 
     proto.setupRichChat = function () {
+        // Phase 3.5 — unlock WebAudio on the first user gesture (autoplay
+        // policy), so receive chimes can play even when they arrive outside a
+        // user interaction.
+        const unlock = () => window.LoveHubSounds?.unlock();
+        ['pointerdown', 'touchstart', 'keydown'].forEach((ev) => window.addEventListener(ev, unlock, { once: true, passive: true }));
         this.setupChatMedia();
         this.setupDrawSheet();
         this.setupStickerSheet();
@@ -702,7 +985,7 @@
         if (!file) return;
         const blob = await this.compressImage(file);
         if (!blob) { this.showToast('Could not read image'); return; }
-        this._mediaEdit = { rotate: 0, flipH: false, brightness: 0, text: '' };
+        this._mediaEdit = { rotate: 0, flipH: false, brightness: 0, text: '', contrast: 0, saturation: 0, blur: 0, emoji: '', strokes: [], draw: false, drawColor: '#ff5fa2', drawSize: 6 };
         this._pendingMedia = { kind: 'image', blob, name: file.name || (fromCamera ? 'camera.jpg' : 'photo.jpg'), size: blob.size, mime: blob.type || 'image/jpeg' };
         this.showMediaPreview(this._pendingMedia);
     };
@@ -778,9 +1061,11 @@
         if (!overlay || !stage) return;
         const oldEdit = document.getElementById('mediaPreviewEdit');
         if (oldEdit) oldEdit.remove();
+        const oldCtrl = document.getElementById('mediaPreviewControls');
+        if (oldCtrl) oldCtrl.remove();
         stage.classList.remove('video-round');
         stage.innerHTML = '';
-        this._mediaEdit = this._mediaEdit || { rotate: 0, flipH: false, brightness: 0, text: '' };
+        this._mediaEdit = this._mediaEdit || { rotate: 0, flipH: false, brightness: 0, text: '', contrast: 0, saturation: 0, blur: 0, emoji: '', strokes: [], draw: false, drawColor: '#ff5fa2', drawSize: 6 };
         if (label) label.textContent = pending.kind === 'video' ? 'Video preview' : 'Photo preview';
         if (pending.kind === 'video') {
             // Telegram-style round preview: thumbnail + play overlay.
@@ -802,6 +1087,42 @@
             play.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
             v.addEventListener('click', toggle);
             v.addEventListener('ended', () => { play.style.display = ''; });
+            // Phase 3.5 — trim + mute before upload (baked into metadata so
+            // bubbles and the fullscreen player replay the chosen clip).
+            this._videoTrim = { start: 0, end: 0 };
+            this._videoMuted = false;
+            const durMax = Math.max(1, Math.floor(pending.duration || 0));
+            const controls = document.createElement('div');
+            controls.className = 'video-controls';
+            controls.id = 'mediaPreviewControls';
+            const stL = document.createElement('label');
+            stL.className = 'vt-label';
+            stL.innerHTML = '<span>Trim start</span><input type="range" class="vt-start" min="0" max="' + durMax + '" value="0">';
+            const enL = document.createElement('label');
+            enL.className = 'vt-label';
+            enL.innerHTML = '<span>Trim end</span><input type="range" class="vt-end" min="0" max="' + durMax + '" value="' + durMax + '">';
+            const muteL = document.createElement('label');
+            muteL.className = 'vt-mute';
+            muteL.innerHTML = '<input type="checkbox" class="vt-muted"> Mute video';
+            const stIn = stL.querySelector('input');
+            const enIn = enL.querySelector('input');
+            const muteIn = muteL.querySelector('input');
+            this._videoTrim.end = durMax;
+            stIn.addEventListener('input', () => {
+                this._videoTrim.start = Number(stIn.value);
+                if (Number(enIn.value) <= Number(stIn.value)) enIn.value = Math.min(Number(enIn.max), Number(stIn.value) + 1);
+                this._videoTrim.end = Number(enIn.value);
+            });
+            enIn.addEventListener('input', () => {
+                this._videoTrim.end = Number(enIn.value);
+                if (Number(stIn.value) >= Number(enIn.value)) stIn.value = Math.max(0, Number(enIn.value) - 1);
+                this._videoTrim.start = Number(stIn.value);
+            });
+            muteIn.addEventListener('change', () => { this._videoMuted = muteIn.checked; });
+            controls.appendChild(stL);
+            controls.appendChild(enL);
+            controls.appendChild(muteL);
+            stage.parentElement.insertBefore(controls, stage);
         } else {
             this.renderPendingImagePreview(stage, pending);
             const edit = this.buildMediaEditor();
@@ -810,37 +1131,85 @@
         overlay.classList.add('active');
     };
 
-    // ---- premium photo editor (Phase 3.3): rotate / flip / brightness / caption ----
+    // ---- premium photo editor (Phase 3.3/3.5): rotate / flip / brightness /
+    //      contrast / saturation / blur / caption / emoji / freehand draw ----
 
     proto.buildMediaEditor = function () {
-        const ed = this._mediaEdit || (this._mediaEdit = { rotate: 0, flipH: false, brightness: 0, text: '' });
+        const ed = this._mediaEdit || (this._mediaEdit = { rotate: 0, flipH: false, brightness: 0, text: '', contrast: 0, saturation: 0, blur: 0, emoji: '', strokes: [], draw: false, drawColor: '#ff5fa2', drawSize: 6 });
         const box = document.createElement('div');
         box.id = 'mediaPreviewEdit';
         const toolbar = document.createElement('div');
         toolbar.className = 'media-edit-toolbar';
-        const rotate = document.createElement('button');
-        rotate.type = 'button';
-        rotate.className = 'media-edit-btn';
-        rotate.innerHTML = '⟳ Rotate';
-        rotate.addEventListener('click', () => { ed.rotate += 90; this.renderPendingImagePreview(document.getElementById('mediaPreviewStage')); });
-        const flip = document.createElement('button');
-        flip.type = 'button';
-        flip.className = 'media-edit-btn';
-        flip.innerHTML = '⇋ Flip';
-        flip.addEventListener('click', () => { ed.flipH = !ed.flipH; this.renderPendingImagePreview(document.getElementById('mediaPreviewStage')); });
-        const brightWrap = document.createElement('label');
-        brightWrap.className = 'media-edit-brightness';
-        brightWrap.innerHTML = '<span>☀️</span>';
-        const range = document.createElement('input');
-        range.type = 'range';
-        range.min = -60;
-        range.max = 60;
-        range.value = 0;
-        range.addEventListener('input', () => { ed.brightness = Number(range.value) / 100; this.renderPendingImagePreview(document.getElementById('mediaPreviewStage')); });
-        brightWrap.appendChild(range);
+        const rerender = () => this.renderPendingImagePreview(document.getElementById('mediaPreviewStage'));
+        const mkBtn = (label) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'media-edit-btn';
+            b.innerHTML = label;
+            return b;
+        };
+        const mkRange = (icon, min, max, set) => {
+            const lab = document.createElement('label');
+            lab.className = 'media-edit-brightness';
+            lab.innerHTML = `<span>${icon}</span>`;
+            const r = document.createElement('input');
+            r.type = 'range';
+            r.min = min;
+            r.max = max;
+            r.value = 0;
+            r.addEventListener('input', () => { set(Number(r.value) / 100); rerender(); });
+            lab.appendChild(r);
+            return lab;
+        };
+        const rotate = mkBtn('⟳ Rotate');
+        rotate.addEventListener('click', () => { ed.rotate += 90; rerender(); });
+        const flip = mkBtn('⇋ Flip');
+        flip.addEventListener('click', () => { ed.flipH = !ed.flipH; rerender(); });
         toolbar.appendChild(rotate);
         toolbar.appendChild(flip);
-        toolbar.appendChild(brightWrap);
+        toolbar.appendChild(mkRange('☀️', -60, 60, (v) => { ed.brightness = v; }));
+        toolbar.appendChild(mkRange('◐', -60, 60, (v) => { ed.contrast = v; }));
+        toolbar.appendChild(mkRange('🎨', -60, 60, (v) => { ed.saturation = v; }));
+        toolbar.appendChild(mkRange('💧', 0, 40, (v) => { ed.blur = v; }));
+
+        // Emoji stamp row.
+        const emojiRow = document.createElement('div');
+        emojiRow.className = 'media-emoji-row';
+        ['❤️', '😂', '😍', '🥰', '👍', '😘', '🎉', '✨'].forEach((em) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'media-emoji' + (ed.emoji === em ? ' active' : '');
+            b.textContent = em;
+            b.addEventListener('click', () => {
+                ed.emoji = ed.emoji === em ? '' : em;
+                emojiRow.querySelectorAll('.media-emoji').forEach((x) => x.classList.toggle('active', x === b));
+                rerender();
+            });
+            emojiRow.appendChild(b);
+        });
+
+        // Freehand draw: toggle + colours + clear.
+        const drawRow = document.createElement('div');
+        drawRow.className = 'media-draw-row';
+        const drawToggle = mkBtn('✏️ Draw');
+        drawToggle.classList.toggle('active', !!ed.draw);
+        drawToggle.addEventListener('click', () => { ed.draw = !ed.draw; drawToggle.classList.toggle('active', ed.draw); });
+        drawRow.appendChild(drawToggle);
+        ['#ffffff', '#ff5fa2', '#7c4dff', '#ffd60a', '#101014'].forEach((c) => {
+            const dot = document.createElement('button');
+            dot.type = 'button';
+            dot.className = 'media-draw-color' + (ed.drawColor === c ? ' active' : '');
+            dot.style.background = c;
+            dot.addEventListener('click', () => {
+                ed.drawColor = c;
+                drawRow.querySelectorAll('.media-draw-color').forEach((x) => x.classList.toggle('active', x === dot));
+            });
+            drawRow.appendChild(dot);
+        });
+        const clearDraw = mkBtn('🗑 Clear');
+        clearDraw.addEventListener('click', () => { ed.strokes = []; rerender(); });
+        drawRow.appendChild(clearDraw);
+
         const textbox = document.createElement('div');
         textbox.className = 'media-edit-textbox';
         const input = document.createElement('input');
@@ -848,9 +1217,11 @@
         input.placeholder = 'Add a caption…';
         input.maxLength = 120;
         input.value = ed.text || '';
-        input.addEventListener('input', () => { ed.text = input.value; this.renderPendingImagePreview(document.getElementById('mediaPreviewStage')); });
+        input.addEventListener('input', () => { ed.text = input.value; rerender(); });
         textbox.appendChild(input);
         box.appendChild(toolbar);
+        box.appendChild(emojiRow);
+        box.appendChild(drawRow);
         box.appendChild(textbox);
         return box;
     };
@@ -876,7 +1247,11 @@
             ctx.translate(w / 2, h / 2);
             ctx.rotate((rot * Math.PI) / 180);
             ctx.scale(ed.flipH ? -1 : 1, 1);
-            ctx.filter = 'brightness(' + (1 + (ed.brightness || 0)) + ')';
+            const filt = 'brightness(' + (1 + (ed.brightness || 0)) + ')'
+                + ' contrast(' + (1 + (ed.contrast || 0)) + ')'
+                + ' saturate(' + (1 + (ed.saturation || 0)) + ')'
+                + (ed.blur ? ' blur(' + ed.blur + 'px)' : '');
+            ctx.filter = filt;
             ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2, img.naturalWidth, img.naturalHeight);
             ctx.filter = 'none';
             if (ed.text) {
@@ -890,13 +1265,81 @@
                 let y = h - 26;
                 for (let i = lines.length - 1; i >= 0; i--) { ctx.fillText(lines[i], w / 2, y); y -= 30; }
             }
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            this.drawMediaDecor(ctx, w, h, ed);
             URL.revokeObjectURL(url);
+            this.attachDrawEvents(canvas, ed);
         };
         img.onerror = () => URL.revokeObjectURL(url);
         img.src = url;
     };
 
-    // Bake the edit state into the final JPEG that gets uploaded.
+    // Freehand strokes are kept in final (unrotated) canvas space — the same
+    // space the uploaded JPEG uses — so preview and sent image always match.
+    proto.attachDrawEvents = function (canvas, ed) {
+        if (!ed.draw) return;
+        let current = null;
+        const toCanvas = (e) => {
+            const rect = canvas.getBoundingClientRect();
+            return [
+                (e.clientX - rect.left) * (canvas.width / rect.width),
+                (e.clientY - rect.top) * (canvas.height / rect.height)
+            ];
+        };
+        canvas.style.touchAction = 'none';
+        canvas.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            current = { color: ed.drawColor, size: ed.drawSize, points: [toCanvas(e)] };
+            canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+        });
+        canvas.addEventListener('pointermove', (e) => {
+            if (!current) return;
+            current.points.push(toCanvas(e));
+            const ctx = canvas.getContext('2d');
+            ctx.strokeStyle = current.color;
+            ctx.lineWidth = current.size;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            const p = current.points;
+            if (p.length >= 2) {
+                ctx.beginPath();
+                ctx.moveTo(p[p.length - 2][0], p[p.length - 2][1]);
+                ctx.lineTo(p[p.length - 1][0], p[p.length - 1][1]);
+                ctx.stroke();
+            }
+        });
+        const end = () => {
+            if (current) { ed.strokes.push(current); current = null; }
+        };
+        canvas.addEventListener('pointerup', end);
+        canvas.addEventListener('pointercancel', end);
+    };
+
+    // Emoji stamp + saved strokes drawn in final canvas space.
+    proto.drawMediaDecor = function (ctx, w, h, ed) {
+        ed = ed || {};
+        if (ed.emoji) {
+            ctx.font = '64px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+            ctx.shadowBlur = 14;
+            ctx.fillText(ed.emoji, w / 2, h * 0.32);
+            ctx.shadowBlur = 0;
+        }
+        (ed.strokes || []).forEach((s) => {
+            ctx.strokeStyle = s.color || '#ff5fa2';
+            ctx.lineWidth = s.size || 6;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+            (s.points || []).forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+            ctx.stroke();
+        });
+    };
+
+    // Bake the edit state (filters / caption / emoji / strokes) into the
+    // final JPEG that gets uploaded.
     proto.applyPendingImageEdits = function (pending) {
         const ed = this._mediaEdit || {};
         return new Promise((resolve) => {
@@ -914,7 +1357,11 @@
                 ctx.translate(w / 2, h / 2);
                 ctx.rotate((rot * Math.PI) / 180);
                 ctx.scale(ed.flipH ? -1 : 1, 1);
-                ctx.filter = 'brightness(' + (1 + (ed.brightness || 0)) + ')';
+                const filt = 'brightness(' + (1 + (ed.brightness || 0)) + ')'
+                    + ' contrast(' + (1 + (ed.contrast || 0)) + ')'
+                    + ' saturate(' + (1 + (ed.saturation || 0)) + ')'
+                    + (ed.blur ? ' blur(' + ed.blur + 'px)' : '');
+                ctx.filter = filt;
                 ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2, img.naturalWidth, img.naturalHeight);
                 ctx.filter = 'none';
                 if (ed.text) {
@@ -928,6 +1375,8 @@
                     let y = h - 26;
                     for (let i = lines.length - 1; i >= 0; i--) { ctx.fillText(lines[i], w / 2, y); y -= 30; }
                 }
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                this.drawMediaDecor(ctx, w, h, ed);
                 canvas.toBlob((b) => {
                     URL.revokeObjectURL(url);
                     if (b) { this._pendingMediaWidth = w; this._pendingMediaHeight = h; }
@@ -1020,7 +1469,9 @@
                     mime: pending.mime,
                     name: pending.name,
                     width: this._pendingMediaWidth || null,
-                    height: this._pendingMediaHeight || null
+                    height: this._pendingMediaHeight || null,
+                    trim: isVideo && this._videoTrim ? { start: this._videoTrim.start, end: this._videoTrim.end } : null,
+                    muted: isVideo ? !!this._videoMuted : null
                 },
                 replyToId: this._chatReplyTo?.id || null
             });
@@ -1463,13 +1914,19 @@
         if (v.rec) return; // already recording
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const rec = new MediaRecorder(stream);
+            const mime = (typeof MediaRecorder !== 'undefined')
+                ? (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4'
+                    : MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+                    : 'audio/webm')
+                : 'audio/webm';
+            const rec = new MediaRecorder(stream, { mimeType: mime });
+            v.mime = mime;
             v.rec = rec;
             v.stream = stream;
             v.chunks = [];
             rec.ondataavailable = (e) => { if (e.data.size) v.chunks.push(e.data); };
             rec.onstop = () => {
-                const blob = new Blob(v.chunks, { type: 'audio/webm' });
+                const blob = new Blob(v.chunks, { type: v.mime || 'audio/webm' });
                 v.blob = blob;
                 if (v.url) URL.revokeObjectURL(v.url);
                 v.url = URL.createObjectURL(blob);

@@ -28,7 +28,8 @@ export class SoundService {
         this._ctx = null;
         this._enabled = true;
         this._theme = 'romantic';
-        this._lastReceiveAt = 0;
+        this._lastSoundAt = 0;
+        this._lastSoundKey = null;
     }
 
     _ensure() {
@@ -90,12 +91,13 @@ export class SoundService {
         const ctx = this._ensure();
         if (!ctx) return;
 
-        // Never double-sound the same event (e.g. realtime echo).
-        if (kind === 'receive' && dedupeKey) {
+        // Never double-sound the same event (realtime echo of an own message,
+        // or the same incoming message delivered through multiple paths).
+        if (dedupeKey) {
             const now = Date.now();
-            if (this._lastReceiveKey === dedupeKey && now - this._lastReceiveAt < 3000) return;
-            this._lastReceiveKey = dedupeKey;
-            this._lastReceiveAt = now;
+            if (this._lastSoundKey === dedupeKey && now - this._lastSoundAt < 3000) return;
+            this._lastSoundKey = dedupeKey;
+            this._lastSoundAt = now;
         }
 
         if (ctx.state === 'suspended') ctx.resume().catch(() => {});

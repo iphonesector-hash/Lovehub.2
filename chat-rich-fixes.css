@@ -271,3 +271,258 @@
     display: block;
 }
 .media-preview-stage.video-round .video-play-btn { position: absolute; }
+
+
+/* ============================================================================
+   Phase 3.5 - chat stability + premium UX polish (additive)
+   ============================================================================ */
+
+/* --- Voice bubble: Telegram-style seek bar + live progress ----------------- */
+.bubble-voice { min-width: 210px; max-width: 264px; }
+.voice-mid { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+.voice-seek {
+    position: relative;
+    height: 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.14);
+    cursor: pointer;
+    touch-action: none;
+}
+.voice-seek-fill {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 0;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--love-accent, #ff5fa2), var(--purple, #7c4dff));
+}
+.voice-bars i.on {
+    opacity: 1;
+    background: linear-gradient(180deg, var(--purple, #7c4dff), var(--luxury-accent, #bf5af2));
+}
+.voice-time { font-size: 11px; font-weight: 600; color: var(--text-tertiary, #8a8aa8); }
+
+/* --- Premium fullscreen media viewer -------------------------------------- */
+.viewer-stage {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+.viewer-media {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    transform-origin: center center;
+    touch-action: none;
+    will-change: transform;
+}
+.viewer-media img, .viewer-media video {
+    max-width: 92vw;
+    max-height: 76vh;
+    border-radius: 14px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+    user-select: none;
+    -webkit-user-select: none;
+}
+.media-viewer { transition: opacity 0.22s ease; }
+.media-viewer.active .viewer-media { animation: viewerIn 0.3s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)); }
+@keyframes viewerIn {
+    from { opacity: 0; transform: scale(0.94); }
+    to { opacity: 1; transform: scale(1); }
+}
+.viewer-actions {
+    position: absolute;
+    bottom: 26px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+    z-index: 3;
+}
+.viewer-act {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 15px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(20, 16, 48, 0.62);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    backdrop-filter: blur(12px);
+    transition: transform 0.16s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), background 0.2s;
+}
+.viewer-act:hover { background: rgba(124, 77, 255, 0.4); }
+.viewer-act:active { transform: scale(0.92); }
+.viewer-act svg { width: 16px; height: 16px; }
+
+/* --- Chat backgrounds: 10 original LoveHub packs + blur/animated modes ---- */
+.page[data-page="chat"] {
+    --chat-bg: linear-gradient(165deg, #151029 0%, #221233 55%, #171033 100%);
+    background: var(--chat-bg);
+    position: relative;
+}
+.page[data-page="chat"]::before {
+    content: '';
+    position: absolute;
+    inset: -40px;
+    z-index: 0;
+    pointer-events: none;
+    background: var(--chat-bg);
+    transform: scale(1.05);
+}
+.page[data-page="chat"][data-bg-mode="blur"]::before {
+    backdrop-filter: blur(26px) saturate(1.25);
+}
+.page[data-page="chat"][data-bg-mode="animated"]::before {
+    background-size: 220% 220%;
+    animation: chatBgDrift 26s ease-in-out infinite alternate;
+}
+@keyframes chatBgDrift {
+    from { transform: scale(1.05) translate3d(-1.2%, -0.8%, 0); }
+    to { transform: scale(1.12) translate3d(1.2%, 0.8%, 0); }
+}
+.page[data-page="chat"] > * { position: relative; z-index: 1; }
+
+.page[data-page="chat"][data-bg="romantic"] { --chat-bg: linear-gradient(150deg, #43122b 0%, #311030 52%, #1b1033 100%); }
+.page[data-page="chat"][data-bg="soft"] {
+    --chat-bg: radial-gradient(circle at 18% 22%, rgba(255, 95, 162, 0.20), transparent 42%),
+               radial-gradient(circle at 82% 78%, rgba(124, 77, 255, 0.18), transparent 46%),
+               linear-gradient(160deg, #241128 0%, #1a1230 100%);
+}
+.page[data-page="chat"][data-bg="moonlight"] {
+    --chat-bg: radial-gradient(circle at 74% 16%, rgba(180, 190, 255, 0.16), transparent 38%),
+               linear-gradient(160deg, #10142e 0%, #141030 60%, #0e1426 100%);
+}
+.page[data-page="chat"][data-bg="aurora"] {
+    --chat-bg: linear-gradient(125deg, #0e1b2c 0%, #12283c 30%, #1d1440 62%, #0f2b34 100%);
+}
+.page[data-page="chat"][data-bg="clouds"] { --chat-bg: linear-gradient(170deg, #e8edf7 0%, #d5def0 55%, #c3cfe8 100%); }
+.page[data-page="chat"][data-bg="sunset"] { --chat-bg: linear-gradient(160deg, #3a1630 0%, #6a2a3c 42%, #b05a3c 100%); }
+.page[data-page="chat"][data-bg="autumn"] { --chat-bg: linear-gradient(160deg, #2e1b16 0%, #4a2a1c 45%, #6b3f22 100%); }
+.page[data-page="chat"][data-bg="ocean"] { --chat-bg: linear-gradient(160deg, #0c2a38 0%, #10384a 50%, #0d2733 100%); }
+.page[data-page="chat"][data-bg="stars"] {
+    --chat-bg: radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.10) 0 1px, transparent 2px),
+               radial-gradient(circle at 60% 60%, rgba(255, 255, 255, 0.08) 0 1px, transparent 2px),
+               radial-gradient(circle at 80% 25%, rgba(255, 255, 255, 0.12) 0 1px, transparent 2px),
+               linear-gradient(160deg, #0a0e24 0%, #121638 100%);
+    background-size: 140px 140px, 180px 180px, 220px 220px, 100% 100%;
+}
+.page[data-page="chat"][data-bg="minimal"] { --chat-bg: linear-gradient(165deg, #f3eef2 0%, #e9e2ee 60%, #e0d9ec 100%); }
+
+/* Background picker in chat settings */
+.bg-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    padding: 10px 0 4px;
+}
+.bg-cell {
+    aspect-ratio: 1;
+    border-radius: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.06);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    font-size: 20px;
+    color: #fff;
+    cursor: pointer;
+    transition: transform 0.16s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), border-color 0.18s;
+}
+.bg-cell small { font-size: 9px; font-weight: 700; letter-spacing: 0.02em; color: var(--text-secondary, #c8c8e0); }
+.bg-cell:hover { transform: scale(1.05); border-color: rgba(255, 255, 255, 0.28); }
+.bg-cell.active { border-color: var(--purple, #7c4dff); box-shadow: 0 0 0 2px rgba(124, 77, 255, 0.35); }
+.bg-modes { display: flex; gap: 8px; padding-top: 8px; }
+.bg-mode {
+    flex: 1;
+    padding: 8px 0;
+    border-radius: 12px;
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary, #c8c8e0);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.18s, color 0.18s;
+}
+.bg-mode.active {
+    background: linear-gradient(135deg, var(--love-accent, #ff5fa2), var(--purple, #7c4dff));
+    color: #fff;
+    border-color: transparent;
+}
+
+/* --- Photo editor extras: emoji stamps + freehand draw -------------------- */
+.media-emoji-row, .media-draw-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 4px 2px;
+}
+.media-emoji {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.05);
+    font-size: 19px;
+    cursor: pointer;
+    transition: transform 0.16s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), background 0.18s;
+}
+.media-emoji:active { transform: scale(0.85); }
+.media-emoji.active {
+    background: linear-gradient(135deg, var(--love-accent, #ff5fa2), var(--purple, #7c4dff));
+    border-color: transparent;
+}
+.media-draw-color {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    cursor: pointer;
+    padding: 0;
+    transition: transform 0.16s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), border-color 0.18s;
+}
+.media-draw-color.active { border-color: #fff; transform: scale(1.15); }
+
+/* --- Video trim + mute controls (pre-send preview) ------------------------- */
+.video-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 4px 2px;
+}
+.vt-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary, #c8c8e0);
+}
+.vt-label input[type="range"] { flex: 1; accent-color: var(--purple, #7c4dff); height: 18px; }
+.vt-mute {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary, #c8c8e0);
+}
+.vt-mute input { accent-color: var(--purple, #7c4dff); width: 16px; height: 16px; }
+
+/* --- Message entrance + empty state polish -------------------------------- */
+.chat-list .message-bubble:last-child {
+    animation: bubbleIn 0.26s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+.chat-empty { animation: bubbleIn 0.3s ease; }
+.send-btn:disabled { opacity: 0.45; cursor: default; }

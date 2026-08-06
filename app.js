@@ -1023,12 +1023,23 @@ class LoveHub {
                 const partnerId = this.currentCouple?.partner?.id;
                 if ((left || []).some((p) => p.user_id === partnerId)) {
                     this._chatPartnerOnline = false;
+                    // Phase 3.5 — don't touch OUR OWN last_seen when the
+                    // partner leaves; their record is updated in their browser.
                     this._chatPartnerLastSeen = new Date().toISOString();
-                    window.LoveHubChat?.touchLastSeen();
                     this.updateChatHeader(this._chatPartnerName || 'Your partner', 'lastSeen', this._chatPartnerLastSeen);
                 }
             }
         });
+
+        // Phase 3.5 — re-render the header clock so "Last seen Xm ago" stays
+        // accurate while the chat is open. (Own last_seen flushing already
+        // happens in the app-wide visibilitychange/pagehide handler.)
+        if (this._lastSeenTimer) clearInterval(this._lastSeenTimer);
+        this._lastSeenTimer = setInterval(() => {
+            if (this.currentPage === 'chat' && !this._chatPartnerOnline) {
+                this.updateChatHeader(this._chatPartnerName || 'Your partner', 'lastSeen', this._chatPartnerLastSeen);
+            }
+        }, 30000);
     }
 
     unsubscribeChat() {
@@ -1036,6 +1047,7 @@ class LoveHub {
         this._chatChannel = null;
         this._chatTyping = false;
         this._chatPartnerOnline = false;
+        if (this._lastSeenTimer) { clearInterval(this._lastSeenTimer); this._lastSeenTimer = null; }
         this.updateTypingIndicator();
     }
 
