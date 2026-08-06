@@ -97,8 +97,13 @@ export class ChatService {
             if (!this.isReady()) return { success: false, error: 'Backend not configured' };
             const uid = await this._uid();
             if (!uid || !coupleId || !file) return { success: false, error: 'Not signed in' };
-            if (file.size && file.size > 10485760) {
-                return { success: false, error: 'File too large (max 10 MB)' };
+            // Videos captured on phones (e.g. .MOV / video/quicktime) are
+            // routinely far larger than 10 MB, so they get a higher cap.
+            // Images are compressed on-device and voice clips are short, so
+            // both stay comfortably under the 10 MB limit.
+            const maxSize = kind === 'videos' ? 52428800 : 10485760; // 50 MB / 10 MB
+            if (file.size && file.size > maxSize) {
+                return { success: false, error: kind === 'videos' ? 'File too large (max 50 MB)' : 'File too large (max 10 MB)' };
             }
             const ext = this._fileExtension(file, kind);
             const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -130,7 +135,7 @@ export class ChatService {
         const mime = (file.type || '').toLowerCase();
         const mimeMap = {
             'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
-            'video/mp4': 'mp4', 'video/webm': 'webm',
+            'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
             'audio/webm': 'webm', 'audio/mp4': 'mp4', 'audio/mpeg': 'mp3'
         };
         if (mimeMap[mime]) return mimeMap[mime];
