@@ -146,6 +146,7 @@ body::before {
 .message-bubble.sent .bubble-content { background: linear-gradient(135deg, var(--love-accent), var(--luxury-accent)); border-bottom-right-radius: 5px; color: #fff; box-shadow: 0 4px 14px rgba(255, 55, 95, 0.28); }
 .bubble-time { font-size: 9px; color: var(--text-tertiary); margin-top: 3px; padding: 0 6px; font-weight: 500; }
 .message-bubble.sent .bubble-time { text-align: right; }
+.bubble-read { display: block; font-size: 9px; font-weight: 600; opacity: 0.6; margin-top: 2px; letter-spacing: 0.3px; }
 .chat-bar { position: fixed; bottom: calc(var(--safe-b) + 82px); left: 16px; right: 16px; display: flex; gap: 8px; z-index: 50; }
 .chat-input { flex: 1; padding: 11px 15px; border-radius: 22px; font-size: 14px; color: #fff; outline: none; background: var(--glass-bg); border: 1px solid var(--glass-border); backdrop-filter: blur(20px); -webkit-user-select: text; user-select: text; }
 .send-btn { width: 42px; height: 42px; border-radius: 50%; background: linear-gradient(135deg, var(--love-accent), var(--luxury-accent)); border: none; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; box-shadow: 0 4px 14px rgba(255, 55, 95, 0.3); }

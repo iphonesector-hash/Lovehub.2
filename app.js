@@ -97,6 +97,12 @@ class LoveHub {
         authService.logout();
         window.LoveHubAuth?.setSession(null);
         window.LoveHubOnboarding?.close();
+        // Drop the realtime chat channel and any cached conversation — a
+        // signed-out user must never keep seeing (or receiving) couple chats.
+        this.unsubscribeChat();
+        this._chatCoupleId = null;
+        this._chatMessages = [];
+        this._chatState = 'idle';
         // Never leave a protected page visible after the session ends.
         if (this.currentPage !== 'home') this.navigateTo('home');
         if (!hadState) {
@@ -260,6 +266,11 @@ class LoveHub {
     async refreshCouple() {
         if (!this.isRealUser() || !window.LoveHubCouple) return;
         this.currentCouple = await window.LoveHubCouple.getMyCouple();
+        // Rebind chat to the (possibly new) couple: conversation + realtime.
+        this.unsubscribeChat();
+        this._chatCoupleId = null;
+        this._chatMessages = [];
+        this._chatState = 'idle';
         this.renderAll();
     }
 
@@ -354,6 +365,14 @@ class LoveHub {
         }
 
         this.currentPage = pageName;
+
+        // Opening the chat tab (re)renders and marks the conversation read.
+        if (pageName === 'chat') {
+            this.renderChat();
+            if (this.isRealUser() && this.currentCouple?.status === 'active' && window.LoveHubChat) {
+                window.LoveHubChat.markAsRead(this.currentCouple.id);
+            }
+        }
 
         // Haptic feedback
         if (navigator.vibrate) navigator.vibrate(8);
@@ -568,9 +587,15 @@ class LoveHub {
         if (!conversation) return;
         conversation.innerHTML = '';
 
+        // Real accounts use the Supabase-backed private couple chat.
+        if (this.isRealUser()) {
+            this.renderRealChat(conversation);
+            return;
+        }
+
         // Only the explicit legacy demo session may show seeded conversation.
         if (!this.isDemoUser()) {
-            conversation.innerHTML = `<div class="chat-empty" style="text-align:center;color:var(--text-secondary);padding:60px 24px;font-size:15px;line-height:1.7">${this.currentUser ? 'Your private couple chat<br>will live here — coming soon.' : 'Log in to open your private couple chat.'}</div>`;
+            conversation.innerHTML = `<div class="chat-empty" style="text-align:center;color:var(--text-secondary);padding:60px 24px;font-size:15px;line-height:1.7">Log in to open your private couple chat.</div>`;
             conversation.scrollTop = 0;
             return;
         }
@@ -599,18 +624,169 @@ class LoveHub {
         conversation.scrollTop = conversation.scrollHeight;
     }
 
+    // Real users: Supabase-backed private couple chat ----------------------
+
+    renderRealChat(conversation) {
+        const couple = this.currentCouple;
+        const titleEl = document.querySelector('.page[data-page="chat"] .page-title');
+        const empty = (html) => {
+            conversation.innerHTML = `<div class="chat-empty" style="text-align:center;color:var(--text-secondary);padding:60px 24px;font-size:15px;line-height:1.7">${html}</div>`;
+            conversation.scrollTop = 0;
+        };
+
+        if (!couple) {
+            if (titleEl) titleEl.textContent = 'Messages';
+            empty('Connect with your partner to start chatting.');
+            return;
+        }
+        if (couple.status !== 'active') {
+            if (titleEl) titleEl.textContent = 'Messages';
+            empty('Your invite is still pending.<br>Chat unlocks when your partner accepts.');
+            return;
+        }
+
+        const partnerName = couple.partner?.display_name || 'Your partner';
+        if (titleEl) titleEl.textContent = partnerName;
+
+        // Load + subscribe once per couple id; re-render from cache after that.
+        if (this._chatCoupleId !== couple.id) {
+            this.unsubscribeChat();
+            this._chatCoupleId = couple.id;
+            this._chatMessages = [];
+            this._chatState = 'loading';
+            this.loadChat(couple.id);
+        }
+
+        if (this._chatState === 'loading') {
+            empty('Loading your conversation…');
+            return;
+        }
+        if (this._chatState === 'error') {
+            empty('Could not load your messages.<br>Check your connection and try again.');
+            return;
+        }
+        if (!this._chatMessages.length) {
+            empty('No messages yet.<br>Say something sweet ❤️');
+            return;
+        }
+
+        const myUid = this.currentUser?.id;
+        const byDate = {};
+        this._chatMessages.forEach((msg) => {
+            const date = (msg.timestamp || '').split('T')[0];
+            if (!byDate[date]) byDate[date] = [];
+            byDate[date].push(msg);
+        });
+
+        Object.keys(byDate).sort().forEach((date) => {
+            const dateDiv = document.createElement('div');
+            dateDiv.className = 'chat-date';
+            dateDiv.innerHTML = `<span>${new Date(date + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</span>`;
+            conversation.appendChild(dateDiv);
+
+            byDate[date].forEach((msg) => {
+                const mine = msg.sender_id === myUid;
+                const bubble = document.createElement('div');
+                bubble.className = `message-bubble ${mine ? 'sent' : 'received'}`;
+                const read = mine && msg.read_at ? '<span class="bubble-read">Read</span>' : '';
+                bubble.innerHTML = `<div class="bubble-content">${this.escapeHtml(msg.text)}</div><div class="bubble-time">${this.formatTime(msg.timestamp)}${read}</div>`;
+                conversation.appendChild(bubble);
+            });
+        });
+        conversation.scrollTop = conversation.scrollHeight;
+    }
+
+    async loadChat(coupleId) {
+        const res = await window.LoveHubChat?.getConversation(coupleId);
+        // A logout or couple switch may have happened while loading.
+        if (this._chatCoupleId !== coupleId) return;
+        if (!res?.success) {
+            this._chatState = 'error';
+        } else {
+            this._chatMessages = (res.messages || []).map((m) => ({
+                id: m.id,
+                sender_id: m.sender_id,
+                text: m.content,
+                timestamp: m.created_at,
+                read_at: m.read_at
+            }));
+            this._chatState = 'ready';
+            this.subscribeChat(coupleId);
+            window.LoveHubChat?.markAsRead(coupleId);
+        }
+        this.renderChat();
+    }
+
+    // Realtime: new messages and read receipts arrive without a refresh.
+    subscribeChat(coupleId) {
+        if (!window.LoveHubChat || this._chatChannel) return;
+        this._chatChannel = window.LoveHubChat.subscribeToMessages(coupleId, (msg, isUpdate) => {
+            if (this._chatCoupleId !== coupleId) return;
+            if (isUpdate) {
+                this._chatMessages = this._chatMessages.map((m) =>
+                    m.id === msg.id ? { ...m, read_at: msg.read_at } : m);
+                if (this.currentPage === 'chat') this.renderChat();
+                return;
+            }
+            if (this._chatMessages.some((m) => m.id === msg.id)) return;
+            this._chatMessages = [...this._chatMessages, {
+                id: msg.id,
+                sender_id: msg.sender_id,
+                text: msg.content,
+                timestamp: msg.created_at,
+                read_at: msg.read_at
+            }];
+            if (this.currentPage === 'chat') this.renderChat();
+            // My own message is already read by me — only receipt partner's.
+            if (msg.sender_id !== this.currentUser?.id) window.LoveHubChat?.markAsRead(coupleId);
+        });
+    }
+
+    unsubscribeChat() {
+        if (this._chatChannel) {
+            window.LoveHubChat?.unsubscribe(this._chatChannel);
+            this._chatChannel = null;
+        }
+    }
+
     setupChat() {
         const sendBtn = document.getElementById('sendBtn');
         const chatInput = document.getElementById('chatInput');
         
-        const sendMessage = () => {
-            if (!this.isDemoUser()) {
-                this.showToast(this.currentUser ? 'Private couple chat is coming soon.' : 'Please login to chat.');
-                return;
-            }
+        const sendMessage = async () => {
             const text = chatInput.value.trim();
             if (!text) return;
-            
+
+            // Real accounts send through Supabase (RLS-scoped to their couple).
+            if (this.isRealUser()) {
+                const couple = this.currentCouple;
+                if (!couple || couple.status !== 'active') {
+                    this.showToast(couple ? 'Chat unlocks when your partner accepts your invite.' : 'Connect with your partner to start chatting.');
+                    return;
+                }
+                const res = await window.LoveHubChat?.sendMessage(couple.id, text);
+                if (!res?.success) {
+                    this.showToast(res?.error || 'Could not send message');
+                    return;
+                }
+                chatInput.value = '';
+                // Realtime usually echoes it back; append now for instant UI.
+                this._chatMessages = [...this._chatMessages, {
+                    id: res.message.id,
+                    sender_id: res.message.sender_id,
+                    text: res.message.content,
+                    timestamp: res.message.created_at,
+                    read_at: res.message.read_at
+                }];
+                this.renderChat();
+                return;
+            }
+
+            if (!this.isDemoUser()) {
+                this.showToast('Please login to chat.');
+                return;
+            }
+
             const messages = storage.get('messages') || LoveHubData.messages;
             messages.push({
                 id: Date.now().toString(),
@@ -651,6 +827,8 @@ class LoveHub {
         if (loveStats) {
             if (!this.isDemoUser()) {
                 const days = this.getDaysTogether();
+                const myId = this.currentUser?.id;
+                const sentCount = myId ? this._chatMessages.filter((m) => m.sender_id === myId).length : 0;
                 loveStats.innerHTML = `
                     <div class="love-stat-card glass-card">
                         <div class="stat-icon" style="color: var(--love-accent)"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg></div>
@@ -659,7 +837,7 @@ class LoveHub {
                     </div>
                     <div class="love-stat-card glass-card">
                         <div class="stat-icon" style="color: var(--luxury-accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></div>
-                        <div class="stat-value">0</div>
+                        <div class="stat-value">${sentCount.toLocaleString()}</div>
                         <div class="stat-label">Messages Sent</div>
                     </div>
                 `;
