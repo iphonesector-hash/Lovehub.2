@@ -98,17 +98,45 @@ Migrations `0004` + `0005` implement the private couple chat:
   `couple_chat_settings` (shared background, member-scoped),
   `notification_preferences` (private).
 
-### Media messages (architecture — not yet implemented)
+### Rich media messages (Phase 3.2 — implemented in migration 0006)
 
-`messages.message_type` (`text | image | voice | file`) and `messages.media`
-(jsonb) already exist in the schema. When uploads are built:
+`messages.message_type` now supports `text | image | video | audio | voice |
+file | drawing | handwritten | sticker | gif | memory`, with flat carriers
+`media_url`, `thumbnail_url`, `file_size`, `duration` and the `media` jsonb
+column for metadata (e.g. drawing strokes). `content` is nullable so
+media-only messages work.
 
-1. Client uploads to a **Supabase Storage bucket** (`couple-media`,
-   path `{couple_id}/{message_id}` — folder RLS via a `couple_id`-owned
-   object naming convention, bucket policy keyed to `is_couple_member`).
-2. Client calls `send_message` with `media = { kind, url, name, size,
-   duration, mime }` + `message_type`.
-3. Existing realtime handles the rest — no chat schema changes needed.
+**Secure media flow** (all in `0006_phase3_rich_media.sql`):
+
+1. Client uploads to the **private** `couples-media` Storage bucket under
+   `couples/{couple_id}/images|videos|audio|drawings/<file>` — object
+   policies only allow confirmed couple members (via `is_couple_member`).
+2. Client calls `send_media_message(...)` (security definer) which
+   re-validates membership + type and inserts the row.
+3. Bubbles never receive raw paths — `sign_couple_media(path)` returns a
+   **1-hour signed URL** only to confirmed members (`ChatService.getMediaUrl`).
+4. Existing realtime delivers the new message instantly; no extra schema.
+
+Image/video uploads are client-compressed (max 1600px JPEG) and previewed
+before sending; drawings/handwritten notes store stroke data for replay;
+voice messages store WebM with duration + waveform.
+
+### Chat sounds (Phase 3.2)
+
+Soft send/receive chimes are generated with **WebAudio** (`SoundService`, no
+assets). `chat_preferences.sounds_enabled` + `sound_theme` (romantic /
+premium / night) are private per user. The app never plays a receive sound
+while the chat is the active, visible page, and dedupes by message id.
+
+### Music Room & AI Love Assistant (Phase 3.2)
+
+- **Music Room** plays procedural ambient "LoveHub originals" generated in
+  the browser via WebAudio (no audio files). Replacing this with real tracks
+  later needs no schema change.
+- **AI Love Assistant** is a curated local generator (love messages, date
+  ideas, gifts, goodnight). To plug in a real model later, swap
+  `chat-rich.js → aiAnswer()` for a Supabase Edge Function call — the
+  sheet UI, chips and preferences stay as-is. No keys are required today.
 
 ### Push notifications (Web / future Android)
 

@@ -12,6 +12,7 @@
     <title>LoveHub — by SECTOR</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="chat-rich.css">
 </head>
 <body>
     <div id="toastContainer" class="toast-container"></div>
@@ -70,20 +71,20 @@
                 </div>
 
                 <div class="actions">
-                    <div class="glass-card action" data-nav="love">
-                        <div class="action-icon"><svg class="icon-svg"><use href="#icon-envelope"/></svg></div>
-                        <div class="action-title">Love Letter</div>
-                        <div class="action-desc">Write feelings</div>
+                    <div class="glass-card action" data-action="music">
+                        <div class="action-icon" style="background:linear-gradient(135deg, rgba(255,55,95,0.22), rgba(255,159,10,0.18))"><svg class="icon-svg"><use href="#icon-music"/></svg></div>
+                        <div class="action-title">Music Room</div>
+                        <div class="action-desc">Love playlist</div>
                     </div>
                     <div class="glass-card action" data-nav="memories">
                         <div class="action-icon"><svg class="icon-svg"><use href="#icon-photo"/></svg></div>
                         <div class="action-title">Memories</div>
                         <div class="action-desc" id="memoriesCount">0 photos</div>
                     </div>
-                    <div class="glass-card action" data-nav="games">
-                        <div class="action-icon"><svg class="icon-svg"><use href="#icon-gamepad"/></svg></div>
-                        <div class="action-title">Games</div>
-                        <div class="action-desc">Play together</div>
+                    <div class="glass-card action" data-action="ai">
+                        <div class="action-icon" style="background:linear-gradient(135deg, rgba(94,92,230,0.25), rgba(191,90,242,0.2))"><svg class="icon-svg"><use href="#icon-sparkles"/></svg></div>
+                        <div class="action-title">AI Love Assistant</div>
+                        <div class="action-desc">Words from the heart</div>
                     </div>
                 </div>
             </section>
@@ -109,8 +110,21 @@
                 <button class="chat-scroll-btn" id="chatScrollBtn" style="display:none"><svg width="16" height="16" class="icon-svg"><use href="#icon-chevronDown"/></svg></button>
                 <div class="chat-bar">
                     <div class="chat-typing" id="chatTyping"></div>
+                    <div class="chat-upload-progress" id="chatUploadProgress" style="display:none">
+                        <span class="upload-label" id="chatUploadLabel">Uploading…</span>
+                        <div class="upload-track"><div class="upload-fill" id="chatUploadFill"></div></div>
+                        <button class="upload-cancel" id="chatUploadCancel"><svg width="12" height="12" class="icon-svg"><use href="#icon-close"/></svg></button>
+                    </div>
                     <div class="chat-composer">
                         <div class="chat-reply-preview" id="chatReplyPreview" style="display:none"></div>
+                        <div class="chat-media-row" id="chatMediaRow">
+                            <button class="media-tool" data-media="image" title="Photo"><svg width="17" height="17" class="icon-svg"><use href="#icon-image"/></svg></button>
+                            <button class="media-tool" data-media="camera" title="Camera"><svg width="17" height="17" class="icon-svg"><use href="#icon-camera"/></svg></button>
+                            <button class="media-tool" data-media="video" title="Video"><svg width="17" height="17" class="icon-svg"><use href="#icon-video"/></svg></button>
+                            <button class="media-tool" data-media="voice" title="Voice message"><svg width="17" height="17" class="icon-svg"><use href="#icon-mic"/></svg></button>
+                            <button class="media-tool" data-media="draw" title="Draw / Handwrite"><svg width="17" height="17" class="icon-svg"><use href="#icon-brush"/></svg></button>
+                            <button class="media-tool" data-media="sticker" title="Stickers"><svg width="17" height="17" class="icon-svg"><use href="#icon-smile"/></svg></button>
+                        </div>
                         <textarea class="chat-input" id="chatInput" placeholder="Message..." rows="1" maxlength="4000"></textarea>
                         <div class="chat-composer-foot">
                             <span class="chat-counter" id="chatCounter"></span>
@@ -118,6 +132,9 @@
                         </div>
                     </div>
                 </div>
+                <input type="file" id="chatImageInput" accept="image/*" style="display:none">
+                <input type="file" id="chatCameraInput" accept="image/*" capture="environment" style="display:none">
+                <input type="file" id="chatVideoInput" accept="video/*" style="display:none">
             </section>
 
             <!-- LOVE PAGE -->
@@ -355,6 +372,140 @@
 
         <input type="file" id="importFileInput" accept=".json" style="display:none;">
 
+        <!-- Phase 3.2 — Chat media & experience sheets -->
+
+        <!-- Media preview (photo/video before send) -->
+        <div class="modal-overlay" id="mediaPreviewOverlay">
+            <div class="modal-content glass-card media-preview-content">
+                <div class="media-preview-head">
+                    <span id="mediaPreviewLabel">Preview</span>
+                    <button class="modal-close" id="mediaPreviewClose"><svg class="icon-svg"><use href="#icon-close"/></svg></button>
+                </div>
+                <div class="media-preview-stage" id="mediaPreviewStage"></div>
+                <div class="media-preview-progress" id="mediaPreviewProgress" style="display:none">
+                    <div class="upload-track"><div class="upload-fill" id="mediaPreviewFill"></div></div>
+                </div>
+                <div class="media-preview-actions">
+                    <button class="login-cancel" id="mediaPreviewCancel">Cancel</button>
+                    <button class="login-submit" id="mediaPreviewSend" style="margin:0">Send ❤️</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Drawing / handwritten canvas -->
+        <div class="draw-overlay" id="drawOverlay">
+            <div class="draw-sheet">
+                <div class="draw-head">
+                    <span class="draw-title" id="drawTitle">Draw your love</span>
+                    <div class="draw-modes">
+                        <button class="draw-mode-btn active" id="drawModeDraw">🎨 Draw</button>
+                        <button class="draw-mode-btn" id="drawModeWrite">✍️ Write</button>
+                    </div>
+                    <button class="modal-close" id="drawClose"><svg class="icon-svg"><use href="#icon-close"/></svg></button>
+                </div>
+                <div class="draw-canvas-wrap"><canvas id="drawCanvas" width="720" height="480"></canvas></div>
+                <div class="draw-tools">
+                    <button class="tool-btn" id="drawUndo" title="Undo"><svg class="icon-svg"><use href="#icon-undo"/></svg></button>
+                    <button class="tool-btn" id="drawRedo" title="Redo"><svg class="icon-svg"><use href="#icon-redo"/></svg></button>
+                    <button class="tool-btn" id="drawEraser" title="Eraser"><svg class="icon-svg"><use href="#icon-eraser"/></svg></button>
+                    <button class="tool-btn" id="drawClear" title="Clear"><svg class="icon-svg"><use href="#icon-trash"/></svg></button>
+                    <button class="tool-btn" id="drawHeart" title="Heart">❤️</button>
+                    <input type="range" class="draw-size" id="drawSize" min="2" max="28" value="6">
+                    <div class="draw-palette" id="drawPalette"></div>
+                </div>
+                <div class="draw-actions">
+                    <button class="login-cancel" id="drawCancel">Cancel</button>
+                    <button class="login-submit" id="drawSend" style="margin:0">Send 💌</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sticker picker -->
+        <div class="draw-overlay" id="stickerOverlay">
+            <div class="draw-sheet sticker-sheet">
+                <div class="draw-head">
+                    <span class="draw-title">Stickers</span>
+                    <button class="modal-close" id="stickerClose"><svg class="icon-svg"><use href="#icon-close"/></svg></button>
+                </div>
+                <div class="sticker-tabs" id="stickerTabs"></div>
+                <div class="sticker-grid" id="stickerGrid"></div>
+            </div>
+        </div>
+
+        <!-- Voice message recorder -->
+        <div class="draw-overlay" id="voiceOverlay">
+            <div class="draw-sheet voice-sheet">
+                <div class="draw-head">
+                    <span class="draw-title">Voice message</span>
+                    <button class="modal-close" id="voiceClose"><svg class="icon-svg"><use href="#icon-close"/></svg></button>
+                </div>
+                <div class="voice-stage">
+                    <canvas class="voice-wave" id="voiceWave" width="640" height="120"></canvas>
+                    <div class="voice-timer" id="voiceTimer">0:00</div>
+                </div>
+                <div class="voice-controls">
+                    <button class="tool-btn rec" id="voiceRecord">● Record</button>
+                    <button class="tool-btn stop" id="voiceStop" style="display:none">■ Stop</button>
+                    <button class="tool-btn" id="voicePlay" style="display:none">▶</button>
+                    <button class="tool-btn speed" id="voiceSpeed" style="display:none">1x</button>
+                </div>
+                <div class="draw-actions">
+                    <button class="login-cancel" id="voiceCancel">Cancel</button>
+                    <button class="login-submit" id="voiceSend" style="margin:0;display:none">Send 🎙️</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Music Room -->
+        <div class="draw-overlay" id="musicRoomOverlay">
+            <div class="draw-sheet music-sheet">
+                <div class="draw-head">
+                    <span class="draw-title">🎵 Music Room</span>
+                    <button class="modal-close" id="musicRoomClose"><svg class="icon-svg"><use href="#icon-close"/></svg></button>
+                </div>
+                <div class="music-hero">
+                    <div class="music-art" id="musicArt">🎵</div>
+                    <div class="music-now">
+                        <div class="music-title" id="musicTitle">Select a track</div>
+                        <div class="music-artist" id="musicArtist">LoveHub originals</div>
+                    </div>
+                </div>
+                <div class="music-controls">
+                    <button class="tool-btn" id="musicPrev">⏮</button>
+                    <button class="music-play" id="musicPlay"><svg class="icon-svg" style="width:22px;height:22px"><use href="#icon-play"/></svg></button>
+                    <button class="tool-btn" id="musicNext">⏭</button>
+                </div>
+                <div class="music-track"><div class="music-fill" id="musicFill"></div></div>
+                <div class="music-list" id="musicList"></div>
+                <div class="music-note">Ambient LoveHub originals — generated live in your browser, nothing to download.</div>
+            </div>
+        </div>
+
+        <!-- AI Love Assistant -->
+        <div class="draw-overlay" id="aiOverlay">
+            <div class="draw-sheet ai-sheet">
+                <div class="draw-head">
+                    <span class="draw-title">🤖 AI Love Assistant</span>
+                    <button class="modal-close" id="aiClose"><svg class="icon-svg"><use href="#icon-close"/></svg></button>
+                </div>
+                <div class="ai-chat" id="aiChat"></div>
+                <div class="ai-chips" id="aiChips"></div>
+                <div class="ai-input-row">
+                    <input class="ai-input" id="aiInput" placeholder="Ask for a message, a date idea, a gift…" autocomplete="off">
+                    <button class="send-btn" id="aiSend"><svg width="18" height="18" class="icon-svg"><use href="#icon-send"/></svg></button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Full-screen media viewer -->
+        <div class="media-viewer" id="mediaViewer">
+            <button class="modal-close viewer-close" id="mediaViewerClose"><svg class="icon-svg"><use href="#icon-close"/></svg></button>
+            <div class="viewer-stage" id="viewerStage"></div>
+        </div>
+
+        <!-- Floating hearts effect layer -->
+        <div class="chat-effects" id="chatEffects"></div>
+
         <!-- Tab Bar -->
         <nav class="tab-bar">
             <button class="tab active" data-tab="home"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-house"/></svg></div><span class="tab-label">Home</span></button>
@@ -366,6 +517,7 @@
     </div>
 
     <script src="icons.js"></script>
+    <script src="stickers.js"></script>
     <!-- Supabase backend (Phase 2.1) — vendored locally, no CDN dependency at runtime -->
     <script src="assets/vendor/supabase-js/umd/supabase.js"></script>
     <script src="supabase/config.js" onerror="console.warn('supabase/config.js not found — copy supabase/config.example.js to supabase/config.js and fill in your keys')"></script>
@@ -378,6 +530,8 @@
     <script src="data.js"></script>
     <script src="utils.js"></script>
     <script src="app.js"></script>
+    <!-- Phase 3.2 feature patch: rich media, sounds, music room, AI assistant -->
+    <script src="chat-rich.js"></script>
     <!-- ES module boot (Phase 0): installs the SVG icon sprite so all <use href="#icon-..."> render -->
     <script type="module" src="src/main.js"></script>
 </body>

@@ -13,6 +13,7 @@ functions. Nothing is dropped or rewritten. Apply them in order in
 | 3 | `0003_phase2_profile_privacy.sql` | **Tightens** `profiles` RLS to owner-or-confirmed-partner only; adds public `profiles_public` view |
 | 4 | `0004_phase3_chat.sql` | Adds `messages` table (couple conversations) + indexes + RLS (couple-members only, `sender_id = auth.uid()` on insert, read-at-only updates) + realtime publication |
 | 5 | `0005_phase3_chat_premium.sql` | Premium messaging: message metadata (media/edited/deleted/reply/pinned/favorite/saved), `message_reactions`, `chat_preferences`, `couple_chat_settings`, `notification_preferences`, `profiles.last_seen_at`, security-definer RPCs for every mutation, stricter update-guard trigger |
+| 6 | `0006_phase3_rich_media.sql` | Rich media (Phase 3.2): expanded `message_type` set (`video/drawing/handwritten/sticker/gif/memory`), flat media columns (`media_url`, `thumbnail_url`, `file_size`, `duration`), nullable `content` (media-only messages), `chat_preferences.sounds_enabled` + `sound_theme`, private `couples-media` Storage bucket with member-only object policies, `send_media_message` + `sign_couple_media` RPCs, extended immutability guard |
 
 > `0003` depends on the `are_couple_members()` helper from `0002` — apply in order.
 
@@ -41,6 +42,19 @@ select public.respond_to_couple_request('<request_id>', true);
 select status, relationship_started_on from public.couples;
 select count(*) from public.couple_members;
 ```
+
+### Rich media (0006) — security summary
+
+- **Storage bucket `couples-media` is private** (no public URLs).
+  Path convention: `couples/{couple_id}/images|videos|audio|drawings/<file>`.
+- Storage object policies (INSERT/UPDATE/SELECT) only pass when
+  `is_couple_member(auth.uid(), <couple_id from path>)` — a third account
+  cannot list, upload to, or read another couple's media.
+- The only read path is the `sign_couple_media(path)` RPC (security
+  definer), which re-validates membership and returns a **short-lived
+  signed URL** (1 h). Raw object paths are never exposed to the client UI.
+- `send_media_message()` validates membership + message type; the
+  update-guard marks the new media columns immutable once sent.
 
 ## Notes / intended behavior
 

@@ -78,6 +78,57 @@ export class ChatService {
         return { success: true, message: data };
     }
 
+    // ---------------- media (private couples-media bucket, migration 0006) ----------------
+
+    // Upload a file for this couple. Storage RLS only permits confirmed
+    // couple members to write into couples/{coupleId}/..., so a non-member
+    // upload is rejected server-side.
+    async uploadCoupleFile(coupleId, kind, file, { onProgress = null } = {}) {
+        if (!this.isReady()) return { success: false, error: 'Backend not configured' };
+        const uid = await this._uid();
+        if (!uid || !coupleId || !file) return { success: false, error: 'Not signed in' };
+        const ext = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
+        const path = `couples/${coupleId}/${kind}/${crypto.randomUUID()}.${ext}`;
+        const { data, error } = await supabaseClient.storage
+            .from('couples-media')
+            .upload(path, file, {
+                cacheControl: '3600',
+                contentType: file.type || 'application/octet-stream',
+                upsert: false,
+                ...(onProgress ? { onUploadProgress: (e) => onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : 0) } : {})
+            });
+        if (error) return { success: false, error: error.message || 'Upload failed' };
+        return { success: true, path: data?.path || path };
+    }
+
+    // Server-checked signed URL (members only). Never expose raw paths.
+    async getMediaUrl(path) {
+        if (!this.isReady() || !path) return null;
+        const { data, error } = await supabaseClient.rpc('sign_couple_media', { p_path: path });
+        if (error || !data) return null;
+        return data;
+    }
+
+    async sendMediaMessage(coupleId, {
+        type = 'image', content = null, mediaUrl = null, thumbnailUrl = null,
+        fileSize = null, duration = null, metadata = null, replyToId = null
+    } = {}) {
+        if (!this.isReady()) return { success: false, error: 'Backend not configured' };
+        const { data, error } = await supabaseClient.rpc('send_media_message', {
+            p_couple_id: coupleId,
+            p_message_type: type,
+            p_content: content || null,
+            p_media_url: mediaUrl || null,
+            p_thumbnail_url: thumbnailUrl || null,
+            p_file_size: fileSize || null,
+            p_duration: duration || null,
+            p_metadata: metadata || null,
+            p_reply_to_id: replyToId || null
+        });
+        if (error) return { success: false, error: error.message };
+        return { success: true, message: data };
+    }
+
     async editMessage(messageId, content) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
         const text = (content || '').trim();
