@@ -367,7 +367,14 @@
 .page[data-page="chat"] {
     --chat-bg: linear-gradient(165deg, #151029 0%, #221233 55%, #171033 100%);
     background: var(--chat-bg);
-    position: relative;
+    /* Keep the base .page sizing (position: absolute; inset: 0). Making this
+       page position: relative removes its viewport-height constraint, so the
+       flex-column layout grows to content height, the .chat-list (flex:1;
+       min-height:0) never becomes a real scroll container, and everything
+       below the viewport is clipped by #app/body overflow:hidden — newest
+       messages (including freshly sent ones) become unreachable. Absolute
+       positioning still anchors the ::before background layer below. */
+    position: absolute;
 }
 .page[data-page="chat"]::before {
     content: '';

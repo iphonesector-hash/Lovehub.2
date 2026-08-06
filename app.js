@@ -741,6 +741,11 @@ class LoveHub {
             });
         });
         conversation.scrollTop = conversation.scrollHeight;
+        // The list uses scroll-behavior: smooth, so this scroll animates. Mark
+        // the at-bottom state now instead of waiting for the animation's scroll
+        // events — a send during the animation would otherwise see a stale
+        // false flag and skip the reveal in appendMessageDom.
+        this._chatAtBottom = true;
         this.debugComposer('after renderRealChat (messages in list)');
     }
 
@@ -863,7 +868,21 @@ class LoveHub {
         const conversation = document.getElementById('chatConversation');
         if (!conversation || this.currentPage !== 'chat') return;
         if (this._chatSearch) { this.renderChat(); return; }
-        const wasAtBottom = this._chatAtBottom;
+
+        // Safety: never duplicate a bubble. The send RPC resolves after the
+        // row is already broadcast, so the sender's own realtime handler can
+        // race the awaited send continuation and append the same message twice.
+        if (msg.id && conversation.querySelector(`.message-bubble[data-mid="${msg.id}"]`)) return;
+
+        // Live geometry check. The cached _chatAtBottom flag is only refreshed
+        // by the list's scroll event, and can go stale exactly around a send:
+        // the keyboard inset grows scrollHeight without firing a scroll event,
+        // and the history smooth-scroll animates for ~300ms after render. A
+        // stale false here is what pushed freshly sent messages below the fold.
+        const atBottomNow = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 80;
+        const wasAtBottom = atBottomNow || this._chatAtBottom;
+        const isMine = msg.sender_id === this.currentUser?.id;
+
         const date = (msg.timestamp || '').split('T')[0];
         const wantDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
         const lastDate = conversation.querySelector('.chat-date:last-of-type span')?.textContent || '';
@@ -874,7 +893,20 @@ class LoveHub {
             conversation.appendChild(dateDiv);
         }
         conversation.appendChild(this.buildMessageBubble(msg, this.currentUser?.id));
-        if (wasAtBottom) conversation.scrollTop = conversation.scrollHeight;
+
+        // Reveal the newest message: always for a message the user just sent,
+        // and for incoming ones only while they were reading the bottom. Use an
+        // instant jump — the list's CSS smooth behavior can fight a moving
+        // target right after an append and leave the message half-scrolled.
+        if (isMine || wasAtBottom) {
+            const prev = conversation.style.scrollBehavior;
+            conversation.style.scrollBehavior = 'auto';
+            conversation.scrollTop = conversation.scrollHeight;
+            conversation.style.scrollBehavior = prev;
+            this._chatAtBottom = true;
+            const btn = document.getElementById('chatScrollBtn');
+            if (btn) btn.style.display = 'none';
+        }
     }
 
     onChatPageOpened() {
