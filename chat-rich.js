@@ -49,6 +49,11 @@
     // =====================================================================
 
     wrap(proto, 'init', function () {
+        // Phase 3.6 — media caches must exist before the first render path can
+        // run (a media bubble may render before handleSignedOut/refreshCouple
+        // fire on cold start with an existing session).
+        this._mediaUrlCache = this._mediaUrlCache || new Map();
+        this._mediaUrlInFlight = this._mediaUrlInFlight || new Map();
         this.setupRichChat();
     });
 
@@ -82,6 +87,7 @@
         this.stopMusic();
         this._pendingMedia = null;
         this._mediaUrlCache = new Map();
+        this._mediaUrlInFlight = new Map();
         this.setUploadUi(false);
     });
 
@@ -91,6 +97,7 @@
         this.stopMusic();
         this._pendingMedia = null;
         this._mediaUrlCache = new Map();
+        this._mediaUrlInFlight = new Map();
     });
 
     wrap(proto, 'resetChatComposer', function () {
@@ -131,6 +138,11 @@
             timestamp: m.created_at,
             message_type: m.message_type || 'text',
             media: m.media || null,
+            // Phase 3.6 — the DB stores rich metadata (mime, trim, muted, …)
+            // in the `media` jsonb column; renderers read it as `metadata`.
+            // Without this mapping, video trim/mute never worked from history
+            // or realtime because msg.metadata was always undefined.
+            metadata: m.media || null,
             media_url: m.media_url || null,
             thumbnail_url: m.thumbnail_url || null,
             file_size: m.file_size || null,
@@ -242,10 +254,29 @@
 
     // ---- media helpers ----
 
+    // Phase 3.6 — media reliability. The previous implementation cached the
+    // in-flight PROMISE (not the resolved URL) and never invalidated failures,
+    // so one transient sign_couple_media failure permanently blanked every
+    // media bubble for 50 minutes (sender AND receiver). Now we cache only the
+    // resolved URL, cache failures as short "retry soon" markers, never reject,
+    // and expire signed URLs before the server's 3600s limit.
     proto.getSignedMediaUrl = async function (path) {
         if (!path) return null;
+        // Defensive init: never let a missing map break the first media bubble.
+        this._mediaUrlCache = this._mediaUrlCache || new Map();
+        this._mediaUrlInFlight = this._mediaUrlInFlight || new Map();
         const cached = this._mediaUrlCache.get(path);
-        if (cached && cached.exp > Date.now()) return cached.url;
+        if (cached) {
+            if (cached.url && cached.exp > Date.now()) return cached.url;
+            // Recent failure — let the caller show the error state and retry
+            // shortly after, instead of inheriting a dead result all session.
+            if (cached.failedAt && Date.now() - cached.failedAt < 8000) return null;
+        }
+        // Deduplicate concurrent requests for the same path (a history batch
+        // renders many bubbles at once) without ever caching the promise —
+        // failures are never stored, only a short failedAt marker so a broken
+        // RPC/auth window does not become a permanent dead entry.
+        if (this._mediaUrlInFlight.has(path)) return this._mediaUrlInFlight.get(path);
         const p = (window.LoveHubChat ? window.LoveHubChat.getMediaUrl(path) : Promise.resolve(null))
             .then((url) => {
                 if (!url) return null;
@@ -257,13 +288,66 @@
                     return base ? base.replace(/\/$/, '') + url : null;
                 }
                 return url;
-            });
-        // Signed URLs expire after 3600s server-side — never cache longer.
-        this._mediaUrlCache.set(path, { url: p, exp: Date.now() + 50 * 60 * 1000 });
+            })
+            .catch(() => null);
+        this._mediaUrlInFlight.set(path, p);
+        const resolved = await p;
+        this._mediaUrlInFlight.delete(path);
+        if (resolved) {
+            // Signed URLs expire after 3600s server-side — refresh before then.
+            this._mediaUrlCache.set(path, { url: resolved, exp: Date.now() + 50 * 60 * 1000 });
+        } else {
+            this._mediaUrlCache.set(path, { failedAt: Date.now() });
+        }
         if (this._mediaUrlCache.size > 150) {
             this._mediaUrlCache.delete(this._mediaUrlCache.keys().next().value);
         }
-        return p;
+        return resolved;
+    };
+
+    // Drop a cached signed URL so the next render/play mints a fresh one.
+    // Used when an <img>/<video>/<audio> element reports a load/play error
+    // (e.g. the URL was rotated before it loaded).
+    proto.invalidateMediaUrl = function (path) {
+        if (path) this._mediaUrlCache.delete(path);
+    };
+
+    // Shared loading placeholder for media bubbles — shown until the signed
+    // URL resolves and the element actually loads.
+    proto.mediaLoadingEl = function () {
+        const el = document.createElement('div');
+        el.className = 'media-loading';
+        el.appendChild(document.createElement('span'));
+        return el;
+    };
+
+    // Shared error state for media bubbles — a broken URL never leaves a blank
+    // bubble, and always offers an inline retry that mints a fresh URL.
+    proto.mediaErrorEl = function (label, onRetry) {
+        const el = document.createElement('div');
+        el.className = 'media-error';
+        const note = document.createElement('span');
+        note.textContent = label || 'Media unavailable';
+        el.appendChild(note);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'Retry';
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (onRetry) onRetry();
+        });
+        el.appendChild(btn);
+        return el;
+    };
+
+    proto.mediaError = function (wrap, label, onRetry) {
+        wrap.querySelector('.media-loading')?.remove();
+        wrap.querySelector('.media-error')?.remove();
+        const imgEl = wrap.querySelector('img');
+        if (imgEl) imgEl.remove();
+        const vid = wrap.querySelector('video');
+        if (vid) vid.remove();
+        wrap.appendChild(this.mediaErrorEl(label, onRetry));
     };
 
     proto.formatDuration = function (sec) {
@@ -292,12 +376,42 @@
         const img = document.createElement('img');
         img.alt = 'Photo';
         img.loading = 'lazy';
+        img.style.display = 'none'; // shown once the image actually loads
         img.addEventListener('click', () => this.openMediaViewer(msg, 'image'));
+        wrap.appendChild(this.mediaLoadingEl());
         wrap.appendChild(img);
-        this.getSignedMediaUrl(msg.media_url).then((url) => {
-            if (url) img.src = url;
-            else wrap.innerHTML = '<div class="msg-error-note" style="padding:10px">Media unavailable</div>';
-        });
+        let attempts = 0;
+        const showError = (label) => {
+            if (wrap.querySelector('.media-error')) return;
+            wrap.querySelector('.media-loading')?.remove();
+            img.style.display = 'none';
+            wrap.appendChild(this.mediaErrorEl(label || 'Media unavailable', () => {
+                attempts = 0;
+                this.invalidateMediaUrl(msg.media_url);
+                wrap.querySelector('.media-error')?.remove();
+                wrap.appendChild(this.mediaLoadingEl());
+                load();
+            }));
+        };
+        const load = () => {
+            this.getSignedMediaUrl(msg.media_url).then((url) => {
+                if (!url) { showError(); return; }
+                img.onload = () => { img.style.display = ''; wrap.querySelector('.media-loading')?.remove(); };
+                img.onerror = () => {
+                    // URL may have been rotated/expired — mint a fresh one once,
+                    // then surface a retryable error instead of a blank bubble.
+                    if (attempts === 0) {
+                        attempts = 1;
+                        this.invalidateMediaUrl(msg.media_url);
+                        load();
+                    } else {
+                        showError();
+                    }
+                };
+                img.src = url;
+            });
+        };
+        load();
         if (msg.text) {
             const cap = document.createElement('div');
             cap.className = 'media-caption';
@@ -320,7 +434,9 @@
         video.playsInline = true;
         video.muted = true;
         video.loop = true;
+        video.style.display = 'none';
         video.addEventListener('click', () => this.openMediaViewer(msg, 'video'));
+        wrap.appendChild(this.mediaLoadingEl());
         wrap.appendChild(video);
         const play = document.createElement('button');
         play.className = 'video-play-btn';
@@ -340,34 +456,69 @@
         }
         const meta = msg.metadata || {};
         const trim = meta.trim && meta.trim.end > (meta.trim.start || 0) ? meta.trim : null;
-        this.getSignedMediaUrl(msg.media_url).then((url) => {
-            if (!url) return;
-            video.src = url;
-            if (trim) {
-                video.onloadedmetadata = () => { video.currentTime = trim.start; video.onloadedmetadata = null; };
-                video.ontimeupdate = () => {
-                    if (video.currentTime >= trim.end) {
-                        video.pause();
-                        video.currentTime = trim.start;
-                        play.style.display = '';
+        let attempts = 0;
+        const showError = (label) => {
+            wrap.querySelector('.media-loading')?.remove();
+            video.style.display = 'none';
+            play.style.display = 'none';
+            if (!wrap.querySelector('.media-error')) {
+                wrap.appendChild(this.mediaErrorEl(label || 'Video unavailable', () => {
+                    attempts = 0;
+                    this.invalidateMediaUrl(msg.media_url);
+                    wrap.querySelector('.media-error')?.remove();
+                    wrap.appendChild(this.mediaLoadingEl());
+                    load();
+                }));
+            }
+        };
+        const load = () => {
+            this.getSignedMediaUrl(msg.media_url).then((url) => {
+                if (!url) { showError(); return; }
+                video.onerror = () => {
+                    // URL may have been rotated/expired — mint a fresh one once,
+                    // then surface a retryable error instead of a black round.
+                    if (attempts === 0) {
+                        attempts = 1;
+                        this.invalidateMediaUrl(msg.media_url);
+                        load();
+                    } else {
+                        showError();
                     }
                 };
-            }
-            // Telegram-style: quietly loop the clip while it is on screen.
-            if ('IntersectionObserver' in window) {
-                const io = new IntersectionObserver((entries) => {
-                    entries.forEach((en) => {
-                        if (en.isIntersecting) {
-                            video.play().catch(() => {});
-                            io.unobserve(video);
-                        } else {
+                video.src = url;
+                if (trim) {
+                    video.onloadedmetadata = () => { video.currentTime = trim.start; video.onloadedmetadata = null; };
+                    video.ontimeupdate = () => {
+                        if (video.currentTime >= trim.end) {
                             video.pause();
+                            video.currentTime = trim.start;
+                            play.style.display = '';
                         }
-                    });
-                }, { threshold: 0.35 });
-                io.observe(video);
-            }
-        });
+                    };
+                }
+                // Reveal the frame once the first frame is ready, then quietly
+                // loop the clip while it is on screen (Telegram-style).
+                video.onloadeddata = () => {
+                    video.style.display = '';
+                    wrap.querySelector('.media-loading')?.remove();
+                    play.style.display = '';
+                };
+                if ('IntersectionObserver' in window) {
+                    const io = new IntersectionObserver((entries) => {
+                        entries.forEach((en) => {
+                            if (en.isIntersecting) {
+                                video.play().catch(() => {});
+                                io.unobserve(video);
+                            } else {
+                                video.pause();
+                            }
+                        });
+                    }, { threshold: 0.35 });
+                    io.observe(video);
+                }
+            });
+        };
+        load();
         this.getSignedMediaUrl(msg.thumbnail_url).then((url) => { if (url) video.poster = url; });
         block.appendChild(wrap);
         if (msg.text) {
@@ -433,17 +584,42 @@
             const active = Math.round(frac * N);
             Array.from(bars.children).forEach((b, i) => b.classList.toggle('on', i < active));
         };
+        // Phase 3.6 — lazy audio init shared by the play button and the seek
+        // bar (a voice message can be scrubbed before its first play). Shows a
+        // loading state, surfaces failures instead of failing silently, and
+        // clears the signed-URL cache so the next tap mints a fresh URL and
+        // retries.
+        const ensureAudio = (onReady) => {
+            if (audio) { if (onReady) onReady(); return; }
+            btn.classList.add('loading');
+            this.getSignedMediaUrl(msg.media_url).then((url) => {
+                btn.classList.remove('loading');
+                if (!url) {
+                    time.textContent = 'Unavailable';
+                    this.showToast('Voice message unavailable');
+                    return;
+                }
+                audio = new Audio(url);
+                audio.playbackRate = rate;
+                audio.onended = () => { setBtn(false); paint(); };
+                audio.onpause = () => { if (!seekDragging) { setBtn(false); paint(); } };
+                audio.onerror = () => {
+                    setBtn(false);
+                    this.invalidateMediaUrl(msg.media_url);
+                    time.textContent = 'Playback failed';
+                    this.showToast('Voice message unavailable');
+                    audio = null;
+                };
+                audio.ontimeupdate = paint;
+                if (onReady) onReady();
+            });
+        };
         btn.addEventListener('click', () => {
             if (!audio) {
-                this.getSignedMediaUrl(msg.media_url).then((url) => {
-                    if (!url) { this.showToast('Voice message unavailable'); return; }
-                    audio = new Audio(url);
-                    audio.playbackRate = rate;
-                    audio.onended = () => { setBtn(false); paint(); };
-                    audio.onpause = () => { if (!seekDragging) { setBtn(false); paint(); } };
-                    audio.ontimeupdate = paint;
-                    audio.play();
-                    setBtn(true);
+                ensureAudio(() => {
+                    audio.play()
+                        .then(() => setBtn(true))
+                        .catch(() => { audio = null; });
                 });
             } else if (playing) {
                 audio.pause();
@@ -459,11 +635,11 @@
             if (audio) audio.playbackRate = rate;
         });
         const seekTo = (e) => {
-            if (!audio) return;
             const rect = seek.getBoundingClientRect();
             const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-            audio.currentTime = frac * total;
-            paint();
+            const applySeek = () => { if (audio) audio.currentTime = frac * total; paint(); };
+            if (!audio) ensureAudio(applySeek); // scrub before first play
+            else applySeek();
         };
         seek.addEventListener('pointerdown', (e) => {
             seekDragging = true;
@@ -593,8 +769,17 @@
             frame.appendChild(v);
         } else {
             const img = document.createElement('img');
-            img.src = url;
             img.alt = 'Photo';
+            frame.appendChild(this.mediaLoadingEl());
+            img.onload = () => frame.querySelector('.media-loading')?.remove();
+            img.onerror = () => {
+                frame.querySelector('.media-loading')?.remove();
+                const note = document.createElement('div');
+                note.className = 'media-error';
+                note.textContent = 'Media unavailable';
+                frame.appendChild(note);
+            };
+            img.src = url;
             frame.appendChild(img);
             this.attachViewerGestures(frame, img, viewer);
         }
@@ -795,11 +980,24 @@
     // Chat settings — Sounds section
     // =====================================================================
 
+    // Phase 3.6 — premium backgrounds. Keeps the legacy theme ids so saved
+    // preferences keep working, adds a short cross-fade when the theme or mode
+    // changes (CSS fades the ::before layer via .bg-switching), and makes the
+    // layer switch idempotent (safe to call on every navigateTo).
     proto.applyChatBackground = function () {
         const page = document.getElementById('chatPage');
         if (!page) return;
-        page.setAttribute('data-bg', this._chatBackground || 'aurora');
-        page.setAttribute('data-bg-mode', this._chatBgMode || 'static');
+        const theme = this._chatBackground || 'aurora';
+        const mode = this._chatBgMode || 'static';
+        const switching = page.getAttribute('data-bg') && page.getAttribute('data-bg') !== theme;
+        page.setAttribute('data-bg', theme);
+        page.setAttribute('data-bg-mode', mode);
+        if (switching) {
+            page.classList.remove('bg-switching');
+            void page.offsetWidth; // reflow so the fade-out can animate
+            page.classList.add('bg-switching');
+            setTimeout(() => page.classList.remove('bg-switching'), 520);
+        }
     };
 
     wrap(proto, 'openChatSettings', function () {
@@ -809,11 +1007,16 @@
         const soundTheme = this._chatSoundTheme || 'romantic';
         const background = this._chatBackground || 'aurora';
         const bgMode = this._chatBgMode || 'static';
+        // Phase 3.6 — premium theme registry. ids stay backward-compatible
+        // (existing saved prefs keep resolving); display names + previews are
+        // the original LoveHub packs. CSS paints each .bg-cell with a mini
+        // version of its gradient so the picker shows real previews.
         const BG_THEMES = [
-            ['romantic', '❤️', 'Romantic'], ['soft', '🌸', 'Soft'], ['moonlight', '🌙', 'Moonlight'],
-            ['aurora', '✨', 'Aurora'], ['clouds', '☁️', 'Clouds'], ['sunset', '🌅', 'Sunset'],
-            ['autumn', '🍂', 'Autumn'], ['ocean', '🌊', 'Ocean'], ['stars', '💫', 'Stars'],
-            ['minimal', '🕊', 'Minimal']
+            ['romantic', '❤️', 'Romantic Velvet'], ['moonlight', '🌙', 'Midnight Love'],
+            ['aurora', '✨', 'Aurora Dream'], ['stars', '🌌', 'Galaxy Couple'],
+            ['ocean', '🌊', 'Ocean Calm'], ['soft', '🌸', 'Sakura Garden'],
+            ['clouds', '☁️', 'Soft Clouds'], ['sunset', '🌅', 'Golden Sunset'],
+            ['autumn', '🍂', 'Autumn Romance'], ['minimal', '🤍', 'Minimal Premium']
         ];
         // Idempotent render: settings can open many times.
         if (!body.querySelector('[data-cs-section="sounds"]')) {
@@ -1441,9 +1644,16 @@
             console.debug('[MEDIA_UPLOAD_START]', isVideo ? 'video' : 'image', blob.type || pending.mime, blob.size);
             this.setUploadUi(true, isVideo ? 'Uploading video…' : 'Uploading image…');
             const kind = isVideo ? 'videos' : 'images';
-            const up = await window.LoveHubChat?.uploadCoupleFile(couple.id, kind, blob, {
-                onProgress: (pct) => this.setUploadUi(true, null, pct)
-            });
+            // Phase 3.6 — one automatic retry on transient failure, then fall
+            // back to the manual path (preview stays open → press Send again).
+            let up = null;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                up = await window.LoveHubChat?.uploadCoupleFile(couple.id, kind, blob, {
+                    onProgress: (pct) => this.setUploadUi(true, null, pct)
+                });
+                if (up?.success) break;
+                if (attempt === 0) console.debug('[MEDIA_UPLOAD_RETRY]', up?.error || 'Upload failed, retrying…');
+            }
             if (!up?.success) {
                 console.debug('[MEDIA_UPLOAD_ERROR]', up?.error || 'Upload failed');
                 this.showToast(`Upload failed — ${up?.error || 'please try again'}`);

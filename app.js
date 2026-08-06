@@ -859,7 +859,10 @@ class LoveHub {
         if (!conversation || this.currentPage !== 'chat') return;
         const existing = conversation.querySelector(`.message-bubble[data-mid="${msg.id}"]`);
         if (!existing) return;
-        const next = this.buildMessageBubble(msg, this.currentUser?.id);
+        // Phase 3.6 — isolated rebuild: one malformed message must never be
+        // able to abort the chat layout / composer.
+        const next = this.buildBubbleSafely(msg, this.currentUser?.id);
+        if (!next) return;
         existing.replaceWith(next);
     }
 
@@ -892,7 +895,11 @@ class LoveHub {
             dateDiv.innerHTML = `<span>${wantDate}</span>`;
             conversation.appendChild(dateDiv);
         }
-        conversation.appendChild(this.buildMessageBubble(msg, this.currentUser?.id));
+        // Phase 3.6 — isolated append: a single unrenderable message is
+        // skipped and logged instead of breaking the whole conversation.
+        const bubble = this.buildBubbleSafely(msg, this.currentUser?.id);
+        if (!bubble) return;
+        conversation.appendChild(bubble);
 
         // Reveal the newest message: always for a message the user just sent,
         // and for incoming ones only while they were reading the bottom. Use an

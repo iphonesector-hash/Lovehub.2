@@ -41,14 +41,17 @@ export class ChatService {
     async getConversation(coupleId, { limit = 200 } = {}) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
         if (!coupleId) return { success: true, messages: [] };
+        // Fetch NEWEST-first so chats with more messages than `limit` show the
+        // most recent conversation (not the oldest history), then reverse so
+        // the UI always receives a chronological list.
         const { data, error } = await supabaseClient
             .from('messages')
             .select('*')
             .eq('couple_id', coupleId)
-            .order('created_at', { ascending: true })
+            .order('created_at', { ascending: false })
             .limit(limit);
         if (error) return { success: false, error: error.message };
-        return { success: true, messages: data || [] };
+        return { success: true, messages: (data || []).slice().reverse() };
     }
 
     async getReactions(coupleId) {
@@ -138,10 +141,20 @@ export class ChatService {
     }
 
     // Server-checked signed URL (members only). Never expose raw paths.
+    // Failures are surfaced in the console with the exact RPC error so a dead
+    // media bubble is diagnosable, while still returning null safely so the
+    // renderer can show its retryable error state instead of breaking.
     async getMediaUrl(path) {
         if (!this.isReady() || !path) return null;
         const { data, error } = await supabaseClient.rpc('sign_couple_media', { p_path: path });
-        if (error || !data) return null;
+        if (error) {
+            console.warn('[MEDIA_SIGN] sign_couple_media failed for', path, error.message || error);
+            return null;
+        }
+        if (!data) {
+            console.warn('[MEDIA_SIGN] sign_couple_media returned no URL for', path);
+            return null;
+        }
         return data;
     }
 

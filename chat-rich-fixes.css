@@ -385,8 +385,14 @@
     background: var(--chat-bg);
     transform: scale(1.05);
 }
+/* Phase 3.6 fix: this layer IS the background, so it must blur ITSELF with
+   `filter` (not `backdrop-filter`, which only blurs content behind it and was
+   a visible no-op here). filter: blur() smears the gradient into a soft,
+   dreamy wallpaper and never touches the composer (the layer has no
+   descendants and no fixed elements live inside it). The existing ::before
+   transition already animates `filter`, so mode changes cross-fade. */
 .page[data-page="chat"][data-bg-mode="blur"]::before {
-    backdrop-filter: blur(26px) saturate(1.25);
+    filter: blur(34px) saturate(1.35);
 }
 .page[data-page="chat"][data-bg-mode="animated"]::before {
     background-size: 220% 220%;
@@ -405,31 +411,77 @@
 .page[data-page="chat"] .chat-search,
 .page[data-page="chat"] .chat-list { position: relative; z-index: 1; }
 
-.page[data-page="chat"][data-bg="romantic"] { --chat-bg: linear-gradient(150deg, #43122b 0%, #311030 52%, #1b1033 100%); }
-.page[data-page="chat"][data-bg="soft"] {
-    --chat-bg: radial-gradient(circle at 18% 22%, rgba(255, 95, 162, 0.20), transparent 42%),
-               radial-gradient(circle at 82% 78%, rgba(124, 77, 255, 0.18), transparent 46%),
-               linear-gradient(160deg, #241128 0%, #1a1230 100%);
+/* --- Premium theme packs (Phase 3.6) — original LoveHub gradients --- */
+/* Romantic Velvet: deep wine + rose-gold glow */
+.page[data-page="chat"][data-bg="romantic"] {
+    --chat-bg: radial-gradient(circle at 22% 18%, rgba(255, 122, 168, 0.28), transparent 44%),
+               radial-gradient(circle at 84% 72%, rgba(201, 84, 255, 0.20), transparent 46%),
+               radial-gradient(circle at 60% 110%, rgba(255, 82, 128, 0.16), transparent 55%),
+               linear-gradient(155deg, #2b0a1d 0%, #4a1432 48%, #2d0b2c 100%);
 }
+/* Midnight Love: deep indigo with a soft moon halo */
 .page[data-page="chat"][data-bg="moonlight"] {
-    --chat-bg: radial-gradient(circle at 74% 16%, rgba(180, 190, 255, 0.16), transparent 38%),
-               linear-gradient(160deg, #10142e 0%, #141030 60%, #0e1426 100%);
+    --chat-bg: radial-gradient(circle at 72% 14%, rgba(226, 232, 255, 0.22), transparent 34%),
+               radial-gradient(circle at 18% 82%, rgba(124, 120, 255, 0.18), transparent 45%),
+               linear-gradient(162deg, #0b1030 0%, #161238 55%, #0a1128 100%);
 }
+/* Aurora Dream: teal → violet ribbons */
 .page[data-page="chat"][data-bg="aurora"] {
-    --chat-bg: linear-gradient(125deg, #0e1b2c 0%, #12283c 30%, #1d1440 62%, #0f2b34 100%);
+    --chat-bg: radial-gradient(circle at 20% 30%, rgba(64, 224, 208, 0.22), transparent 42%),
+               radial-gradient(circle at 80% 20%, rgba(124, 77, 255, 0.28), transparent 40%),
+               radial-gradient(circle at 50% 95%, rgba(255, 95, 162, 0.16), transparent 50%),
+               linear-gradient(135deg, #081926 0%, #0d2438 32%, #1d1440 68%, #0c2630 100%);
 }
-.page[data-page="chat"][data-bg="clouds"] { --chat-bg: linear-gradient(170deg, #e8edf7 0%, #d5def0 55%, #c3cfe8 100%); }
-.page[data-page="chat"][data-bg="sunset"] { --chat-bg: linear-gradient(160deg, #3a1630 0%, #6a2a3c 42%, #b05a3c 100%); }
-.page[data-page="chat"][data-bg="autumn"] { --chat-bg: linear-gradient(160deg, #2e1b16 0%, #4a2a1c 45%, #6b3f22 100%); }
-.page[data-page="chat"][data-bg="ocean"] { --chat-bg: linear-gradient(160deg, #0c2a38 0%, #10384a 50%, #0d2733 100%); }
+/* Galaxy Couple: starfield + nebula (was “stars”) */
 .page[data-page="chat"][data-bg="stars"] {
-    --chat-bg: radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.10) 0 1px, transparent 2px),
-               radial-gradient(circle at 60% 60%, rgba(255, 255, 255, 0.08) 0 1px, transparent 2px),
-               radial-gradient(circle at 80% 25%, rgba(255, 255, 255, 0.12) 0 1px, transparent 2px),
-               linear-gradient(160deg, #0a0e24 0%, #121638 100%);
-    background-size: 140px 140px, 180px 180px, 220px 220px, 100% 100%;
+    --chat-bg: radial-gradient(circle at 24% 26%, rgba(255, 255, 255, 0.14) 0 1px, transparent 2px),
+               radial-gradient(circle at 58% 62%, rgba(255, 255, 255, 0.10) 0 1px, transparent 2px),
+               radial-gradient(circle at 82% 22%, rgba(255, 255, 255, 0.16) 0 1px, transparent 2px),
+               radial-gradient(circle at 70% 80%, rgba(150, 84, 255, 0.22), transparent 48%),
+               radial-gradient(circle at 20% 75%, rgba(64, 180, 255, 0.16), transparent 46%),
+               linear-gradient(160deg, #070b20 0%, #0e1230 55%, #181040 100%);
+    background-size: 150px 150px, 190px 190px, 230px 230px, 100% 100%, 100% 100%, 100% 100%;
 }
-.page[data-page="chat"][data-bg="minimal"] { --chat-bg: linear-gradient(165deg, #f3eef2 0%, #e9e2ee 60%, #e0d9ec 100%); }
+/* Ocean Calm: layered deep-sea blues with a surface sheen */
+.page[data-page="chat"][data-bg="ocean"] {
+    --chat-bg: radial-gradient(circle at 30% 18%, rgba(94, 214, 232, 0.20), transparent 40%),
+               radial-gradient(circle at 80% 85%, rgba(56, 130, 190, 0.22), transparent 48%),
+               linear-gradient(165deg, #07222e 0%, #0c3a4c 45%, #08242f 100%);
+}
+/* Sakura Garden: soft petal pink (was “soft”) */
+.page[data-page="chat"][data-bg="soft"] {
+    --chat-bg: radial-gradient(circle at 18% 22%, rgba(255, 158, 200, 0.26), transparent 42%),
+               radial-gradient(circle at 82% 78%, rgba(196, 130, 255, 0.20), transparent 46%),
+               radial-gradient(circle at 45% 55%, rgba(255, 122, 168, 0.10), transparent 52%),
+               linear-gradient(160deg, #241128 0%, #2f1736 55%, #221033 100%);
+}
+/* Soft Clouds: airy blue-white with a warm core */
+.page[data-page="chat"][data-bg="clouds"] {
+    --chat-bg: radial-gradient(circle at 28% 26%, rgba(255, 255, 255, 0.9), transparent 46%),
+               radial-gradient(circle at 74% 68%, rgba(180, 200, 240, 0.65), transparent 50%),
+               linear-gradient(170deg, #dfe7f6 0%, #c9d6ee 55%, #b9c9ea 100%);
+}
+/* Golden Sunset: warm gold → amber → coral */
+.page[data-page="chat"][data-bg="sunset"] {
+    --chat-bg: radial-gradient(circle at 72% 18%, rgba(255, 214, 140, 0.30), transparent 40%),
+               radial-gradient(circle at 22% 85%, rgba(255, 122, 84, 0.24), transparent 48%),
+               linear-gradient(160deg, #381230 0%, #6e2a3c 42%, #c06040 100%);
+}
+/* Autumn Romance: warm rust, amber, forest */
+.page[data-page="chat"][data-bg="autumn"] {
+    --chat-bg: radial-gradient(circle at 78% 20%, rgba(255, 190, 110, 0.24), transparent 42%),
+               radial-gradient(circle at 18% 80%, rgba(160, 96, 54, 0.26), transparent 46%),
+               linear-gradient(160deg, #241410 0%, #452a18 48%, #5c3a1e 100%);
+}
+/* Minimal Premium: elegant porcelain with a whisper of color */
+.page[data-page="chat"][data-bg="minimal"] {
+    --chat-bg: radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.95), transparent 48%),
+               radial-gradient(circle at 78% 80%, rgba(226, 214, 240, 0.8), transparent 52%),
+               linear-gradient(165deg, #f5f1f7 0%, #ebe4f0 58%, #e3dcee 100%);
+}
+/* Cross-fade when the theme or mode changes (toggled from applyChatBackground) */
+.page[data-page="chat"]::before { transition: opacity 0.45s ease, filter 0.45s ease; }
+.page[data-page="chat"].bg-switching::before { opacity: 0; }
 
 /* Background picker in chat settings */
 .bg-grid {
@@ -438,11 +490,11 @@
     gap: 8px;
     padding: 10px 0 4px;
 }
+/* Real preview cards: each cell paints a mini version of its theme. */
 .bg-cell {
     aspect-ratio: 1;
     border-radius: 14px;
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.06);
+    border: 2px solid rgba(255, 255, 255, 0.14);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -451,11 +503,37 @@
     font-size: 20px;
     color: #fff;
     cursor: pointer;
-    transition: transform 0.16s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), border-color 0.18s;
+    overflow: hidden;
+    position: relative;
+    transition: transform 0.16s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), border-color 0.18s, box-shadow 0.18s;
 }
-.bg-cell small { font-size: 9px; font-weight: 700; letter-spacing: 0.02em; color: var(--text-secondary, #c8c8e0); }
-.bg-cell:hover { transform: scale(1.05); border-color: rgba(255, 255, 255, 0.28); }
-.bg-cell.active { border-color: var(--purple, #7c4dff); box-shadow: 0 0 0 2px rgba(124, 77, 255, 0.35); }
+.bg-cell::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--cell-bg, rgba(255, 255, 255, 0.06));
+    z-index: 0;
+    transition: filter 0.25s ease;
+}
+.bg-cell:hover::after { filter: brightness(1.15); }
+.bg-cell > * { position: relative; z-index: 1; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55); }
+.bg-cell small { font-size: 9px; font-weight: 700; letter-spacing: 0.02em; color: rgba(255, 255, 255, 0.92); }
+.bg-cell:hover { transform: scale(1.06); border-color: rgba(255, 255, 255, 0.35); }
+.bg-cell.active { border-color: var(--purple, #7c4dff); box-shadow: 0 0 0 2px rgba(124, 77, 255, 0.4), 0 4px 18px rgba(124, 77, 255, 0.35); }
+/* Mini previews — the same layered gradients as the full page themes. */
+.bg-cell.bg-romantic { --cell-bg: radial-gradient(circle at 30% 25%, rgba(255, 122, 168, 0.5), transparent 55%), linear-gradient(155deg, #2b0a1d, #4a1432 48%, #2d0b2c); }
+.bg-cell.bg-moonlight { --cell-bg: radial-gradient(circle at 72% 20%, rgba(226, 232, 255, 0.5), transparent 45%), linear-gradient(162deg, #0b1030, #161238 55%, #0a1128); }
+.bg-cell.bg-aurora { --cell-bg: radial-gradient(circle at 25% 30%, rgba(64, 224, 208, 0.55), transparent 55%), radial-gradient(circle at 78% 30%, rgba(124, 77, 255, 0.6), transparent 55%), linear-gradient(135deg, #081926, #1d1440); }
+.bg-cell.bg-stars { --cell-bg: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.5) 0 1px, transparent 2px), radial-gradient(circle at 70% 75%, rgba(150, 84, 255, 0.55), transparent 60%), linear-gradient(160deg, #070b20, #181040); }
+.bg-cell.bg-ocean { --cell-bg: radial-gradient(circle at 35% 22%, rgba(94, 214, 232, 0.5), transparent 55%), linear-gradient(165deg, #07222e, #0c3a4c 45%, #08242f); }
+.bg-cell.bg-soft { --cell-bg: radial-gradient(circle at 30% 25%, rgba(255, 158, 200, 0.55), transparent 55%), linear-gradient(160deg, #241128, #2f1736 55%, #221033); }
+.bg-cell.bg-clouds { --cell-bg: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.95), transparent 55%), linear-gradient(170deg, #dfe7f6, #c9d6ee 55%, #b9c9ea); }
+.bg-cell.bg-sunset { --cell-bg: radial-gradient(circle at 72% 22%, rgba(255, 214, 140, 0.65), transparent 50%), linear-gradient(160deg, #381230, #6e2a3c 42%, #c06040); }
+.bg-cell.bg-autumn { --cell-bg: radial-gradient(circle at 75% 22%, rgba(255, 190, 110, 0.55), transparent 50%), linear-gradient(160deg, #241410, #452a18 48%, #5c3a1e); }
+.bg-cell.bg-minimal { --cell-bg: radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.95), transparent 55%), linear-gradient(165deg, #f5f1f7, #ebe4f0 58%, #e3dcee); }
+.bg-cell.bg-minimal, .bg-cell.bg-minimal small { color: #4a3f55; }
+.bg-cell.bg-clouds, .bg-cell.bg-clouds small { color: #2c3a5c; }
+.bg-cell.bg-clouds > *, .bg-cell.bg-minimal > * { text-shadow: none; }
 .bg-modes { display: flex; gap: 8px; padding-top: 8px; }
 .bg-mode {
     flex: 1;
@@ -474,6 +552,93 @@
     color: #fff;
     border-color: transparent;
 }
+/* Phase 3.6 — hide the LEGACY placeholder Background picker (theme-grid +
+   custom color) and its Share-with-partner toggle. Both wrote columns that no
+   longer exist and could not change the visible chat background; the premium
+   10-pack picker with static/blur/animated modes (rendered by chat-rich.js
+   below the Sounds section) is the single source of truth. The legacy handlers
+   stay bound but the sections are unreachable. */
+#csBody > .cs-section:has(.theme-grid),
+#csBody > .cs-section:has(#csSharedSwitch) {
+    display: none !important;
+}
+
+/* --- Phase 3.6: media loading / error / retry states ---------------------
+   A media bubble never goes blank: it shows a spinner while the signed URL
+   resolves, then the element, or a retryable error card if it fails. */
+.bubble-media .media-loading,
+.bubble-voice .media-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3;
+    border-radius: inherit;
+    background: rgba(8, 8, 18, 0.42);
+}
+.bubble-media .media-loading span,
+.media-preview-stage .media-loading span {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.18);
+    border-top-color: var(--love-accent, #ff5fa2);
+    animation: mediaSpin 0.8s linear infinite;
+}
+.media-preview-stage .media-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3;
+}
+@keyframes mediaSpin { to { transform: rotate(360deg); } }
+
+.bubble-media .media-error,
+.viewer-media .media-error,
+.media-preview-stage .media-error {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    z-index: 3;
+    padding: 12px;
+    text-align: center;
+    border-radius: inherit;
+    background: rgba(8, 8, 18, 0.55);
+    color: var(--text-secondary, #c8c8e0);
+    font-size: 12px;
+    font-weight: 600;
+}
+.bubble-media .media-error button,
+.viewer-media .media-error button,
+.media-preview-stage .media-error button {
+    padding: 6px 16px;
+    border-radius: 999px;
+    border: none;
+    background: linear-gradient(135deg, var(--love-accent, #ff5fa2), var(--purple, #7c4dff));
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+.bubble-media .media-error button:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 16px rgba(124, 77, 255, 0.4);
+}
+.bubble-media .media-error button:active { transform: scale(0.94); }
+.bubble-media .media-error + img,
+.bubble-media .media-error + video { display: none !important; }
+
+/* Voice play button loading state */
+.voice-play-btn.loading svg { animation: voicePulse 0.9s ease-in-out infinite; opacity: 0.55; }
+@keyframes voicePulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(0.8); } }
 
 /* --- Photo editor extras: emoji stamps + freehand draw -------------------- */
 .media-emoji-row, .media-draw-row {

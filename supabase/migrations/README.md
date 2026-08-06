@@ -14,6 +14,8 @@ functions. Nothing is dropped or rewritten. Apply them in order in
 | 4 | `0004_phase3_chat.sql` | Adds `messages` table (couple conversations) + indexes + RLS (couple-members only, `sender_id = auth.uid()` on insert, read-at-only updates) + realtime publication |
 | 5 | `0005_phase3_chat_premium.sql` | Premium messaging: message metadata (media/edited/deleted/reply/pinned/favorite/saved), `message_reactions`, `chat_preferences`, `couple_chat_settings`, `notification_preferences`, `profiles.last_seen_at`, security-definer RPCs for every mutation, stricter update-guard trigger |
 | 6 | `0006_phase3_rich_media.sql` | Rich media (Phase 3.2): expanded `message_type` set (`video/drawing/handwritten/sticker/gif/memory`), flat media columns (`media_url`, `thumbnail_url`, `file_size`, `duration`), nullable `content` (media-only messages), `chat_preferences.sounds_enabled` + `sound_theme`, private `couples-media` Storage bucket with member-only object policies, `send_media_message` + `sign_couple_media` RPCs, extended immutability guard |
+| 7 | `0007_phase35_chat_polish.sql` | Chat polish (Phase 3.5): adds `chat_preferences.background` (10 theme packs) + `chat_preferences.background_mode` (`static`/`blur`/`animated`) with defaults, so existing rows are covered by the 0005 owner-only RLS automatically |
+| 8 | `0008_phase36_media_reliability.sql` | Media reliability (Phase 3.6): `sign_couple_media()` now surfaces the real storage error (auth / path / membership / object-not-found) instead of swallowing it, so clients can distinguish a permission error from an infra hiccup and retry intelligently. No policy or security changes |
 
 > `0003` depends on the `are_couple_members()` helper from `0002` — apply in order.
 
