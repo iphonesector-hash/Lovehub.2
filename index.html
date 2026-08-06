@@ -89,12 +89,34 @@
             </section>
 
             <!-- CHAT PAGE -->
-            <section class="page" data-page="chat">
-                <div class="page-title">Messages</div>
+            <section class="page" data-page="chat" id="chatPage">
+                <div class="chat-head">
+                    <div class="chat-head-info">
+                        <div class="chat-title" id="chatTitle">Messages</div>
+                        <div class="chat-sub" id="chatSub"></div>
+                    </div>
+                    <div class="chat-head-actions">
+                        <button class="glass icon-btn" id="chatSearchBtn" title="Search messages"><svg width="18" height="18" class="icon-svg"><use href="#icon-search"/></svg></button>
+                        <button class="glass icon-btn" id="chatSettingsBtn" title="Chat settings"><svg width="18" height="18" class="icon-svg"><use href="#icon-settings"/></svg></button>
+                    </div>
+                </div>
+                <div class="chat-search" id="chatSearchBar" style="display:none">
+                    <svg width="15" height="15" class="icon-svg"><use href="#icon-search"/></svg>
+                    <input type="text" id="chatSearchInput" placeholder="Search conversation..." autocomplete="off">
+                    <button id="chatSearchClose"><svg width="14" height="14" class="icon-svg"><use href="#icon-close"/></svg></button>
+                </div>
                 <div class="chat-list" id="chatConversation"></div>
+                <button class="chat-scroll-btn" id="chatScrollBtn" style="display:none"><svg width="16" height="16" class="icon-svg"><use href="#icon-chevronDown"/></svg></button>
                 <div class="chat-bar">
-                    <input type="text" class="chat-input" placeholder="Message..." id="chatInput">
-                    <button class="send-btn" id="sendBtn"><svg width="18" height="18" class="icon-svg"><use href="#icon-send"/></svg></button>
+                    <div class="chat-typing" id="chatTyping"></div>
+                    <div class="chat-composer">
+                        <div class="chat-reply-preview" id="chatReplyPreview" style="display:none"></div>
+                        <textarea class="chat-input" id="chatInput" placeholder="Message..." rows="1" maxlength="4000"></textarea>
+                        <div class="chat-composer-foot">
+                            <span class="chat-counter" id="chatCounter"></span>
+                            <button class="send-btn" id="sendBtn" disabled><svg width="18" height="18" class="icon-svg"><use href="#icon-send"/></svg></button>
+                        </div>
+                    </div>
                 </div>
             </section>
 

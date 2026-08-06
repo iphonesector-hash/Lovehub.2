@@ -77,3 +77,54 @@ Dashboard → Authentication → URL Configuration:
 app root, `index.html` stripped), so email-confirmation and password-reset
 links land back on the app on whichever domain it is served from, where
 `detectSessionInUrl` processes the token.
+
+## 7. Premium couple chat (Phase 3.2)
+
+Migrations `0004` + `0005` implement the private couple chat:
+
+- **Reads** → RLS on `messages` / `message_reactions` (confirmed couple
+  members only — a third account sees zero rows).
+- **Writes** → security-definer RPCs only (`send_message`, `edit_message`,
+  `delete_message_for_me`, `delete_message_for_everyone`,
+  `mark_message_delivered`, `mark_messages_read`, `toggle_message_flag`,
+  `react_to_message`). Server rules: sender-only edits (15 min),
+  sender-only delete-for-everyone (1 hour), receiver-only read/delivered
+  receipts (a sender cannot fake read status), member-only reactions/flags.
+- **Realtime** → `messages` + `message_reactions` postgres_changes for
+  instant messages, receipts and reactions; a **broadcast** channel for
+  typing indicators (never stored); a **presence** channel for online /
+  last-seen (`profiles.last_seen_at` persisted via `touch_last_seen`).
+- **Preferences** → `chat_preferences` (personal background, owner-private),
+  `couple_chat_settings` (shared background, member-scoped),
+  `notification_preferences` (private).
+
+### Media messages (architecture — not yet implemented)
+
+`messages.message_type` (`text | image | voice | file`) and `messages.media`
+(jsonb) already exist in the schema. When uploads are built:
+
+1. Client uploads to a **Supabase Storage bucket** (`couple-media`,
+   path `{couple_id}/{message_id}` — folder RLS via a `couple_id`-owned
+   object naming convention, bucket policy keyed to `is_couple_member`).
+2. Client calls `send_message` with `media = { kind, url, name, size,
+   duration, mime }` + `message_type`.
+3. Existing realtime handles the rest — no chat schema changes needed.
+
+### Push notifications (Web / future Android)
+
+In-app (foreground + background-tab) notifications are implemented via the
+**Notification API** + `sw.js` (register on user opt-in, never notify while
+chat is open, preferences in `notification_preferences`).
+
+Real **Web Push** (works when the tab is closed) requires:
+
+1. Generate a **VAPID key pair** (e.g. `npx web-push generate-vapid-keys`).
+2. Add a Supabase **Edge Function** (`send-push`) that verifies the caller
+   is a couple member and calls your push provider with the VAPID keys.
+3. Expose `SUPABASE_URL`/`SUPABASE_ANON_KEY`/`VAPID_PUBLIC_KEY` as Vercel
+   env vars (VAPID_PRIVATE_KEY stays server-side only).
+4. Uncomment the `push` handler stub in `sw.js`.
+
+Future Android builds can route through the same Edge Function (FCM) or a
+native push service — the client-side `NotificationService` and preference
+storage are transport-agnostic.

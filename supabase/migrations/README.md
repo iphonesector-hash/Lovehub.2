@@ -12,6 +12,7 @@ functions. Nothing is dropped or rewritten. Apply them in order in
 | 2 | `0002_phase2_couples.sql` | Creates `couples`, `couple_members`, `couple_requests` + helper functions + RLS + security-definer RPCs |
 | 3 | `0003_phase2_profile_privacy.sql` | **Tightens** `profiles` RLS to owner-or-confirmed-partner only; adds public `profiles_public` view |
 | 4 | `0004_phase3_chat.sql` | Adds `messages` table (couple conversations) + indexes + RLS (couple-members only, `sender_id = auth.uid()` on insert, read-at-only updates) + realtime publication |
+| 5 | `0005_phase3_chat_premium.sql` | Premium messaging: message metadata (media/edited/deleted/reply/pinned/favorite/saved), `message_reactions`, `chat_preferences`, `couple_chat_settings`, `notification_preferences`, `profiles.last_seen_at`, security-definer RPCs for every mutation, stricter update-guard trigger |
 
 > `0003` depends on the `are_couple_members()` helper from `0002` — apply in order.
 
@@ -55,7 +56,10 @@ select count(*) from public.couple_members;
 - **Leaving** removes the whole couple (both members are freed).
 - `profiles_public` runs as the view owner (postgres) so RLS on the
   base table is bypassed **only for those 6 public columns**.
-- **Chat (0004):** `messages` reads/inserts/updates are RLS-scoped to
-  `is_couple_member(auth.uid(), couple_id)`; inserts require
-  `sender_id = auth.uid()`; a trigger restricts updates to `read_at` only;
-  there is no DELETE policy (messages are permanent).
+- **Chat (0004 + 0005):** `messages` reads are RLS-scoped to
+  `is_couple_member(auth.uid(), couple_id)`; **every mutation is an
+  RPC** (security definer) that enforces sender/receiver rules server-side:
+  only the sender can edit (15-min window) or delete-for-everyone (1-hour
+  window), only the receiver can mark delivered/read, reactions/flags are
+  member-scoped, and `deleted_for` can only ever gain the caller's own uid.
+  There is no DELETE policy (messages are permanent).

@@ -8,6 +8,24 @@ class LoveHub {
         this._authStateBusy = false;
         this._authStateQueued = false;
         this._authStateGeneration = 0;
+        // Premium chat state (Phase 3.2)
+        this._chatMessages = [];
+        this._chatCoupleId = null;
+        this._chatState = 'idle';
+        this._chatChannel = null;
+        this._chatReactions = {};
+        this._chatTyping = false;
+        this._chatTypingTimer = null;
+        this._chatPartnerOnline = false;
+        this._chatPartnerLastSeen = null;
+        this._chatPartnerName = null;
+        this._chatSearch = '';
+        this._chatReplyTo = null;
+        this._chatSending = false;
+        this._chatPrefs = null;
+        this._chatSharedBg = false;
+        this._chatNotifPrefs = null;
+        this._chatAtBottom = true;
         this.init();
     }
 
@@ -97,12 +115,23 @@ class LoveHub {
         authService.logout();
         window.LoveHubAuth?.setSession(null);
         window.LoveHubOnboarding?.close();
-        // Drop the realtime chat channel and any cached conversation — a
+        // Drop every realtime chat channel and any cached conversation — a
         // signed-out user must never keep seeing (or receiving) couple chats.
         this.unsubscribeChat();
         this._chatCoupleId = null;
         this._chatMessages = [];
+        this._chatReactions = {};
         this._chatState = 'idle';
+        this._chatTyping = false;
+        this._chatPartnerOnline = false;
+        this._chatPartnerLastSeen = null;
+        this._chatReplyTo = null;
+        this._chatSearch = '';
+        this._chatPrefs = null;
+        this._chatSharedBg = false;
+        this._chatNotifPrefs = null;
+        this.closeChatSheets();
+        this.resetChatComposer();
         // Never leave a protected page visible after the session ends.
         if (this.currentPage !== 'home') this.navigateTo('home');
         if (!hadState) {
@@ -270,7 +299,16 @@ class LoveHub {
         this.unsubscribeChat();
         this._chatCoupleId = null;
         this._chatMessages = [];
+        this._chatReactions = {};
         this._chatState = 'idle';
+        this._chatTyping = false;
+        this._chatPartnerOnline = false;
+        this._chatPartnerLastSeen = null;
+        this._chatReplyTo = null;
+        this._chatPrefs = null;
+        this._chatSharedBg = false;
+        this._chatNotifPrefs = null;
+        this.resetChatComposer();
         this.renderAll();
     }
 
@@ -366,12 +404,9 @@ class LoveHub {
 
         this.currentPage = pageName;
 
-        // Opening the chat tab (re)renders and marks the conversation read.
+        // Opening the chat tab (re)renders, marks read and binds scroll.
         if (pageName === 'chat') {
-            this.renderChat();
-            if (this.isRealUser() && this.currentCouple?.status === 'active' && window.LoveHubChat) {
-                window.LoveHubChat.markAsRead(this.currentCouple.id);
-            }
+            this.onChatPageOpened();
         }
 
         // Haptic feedback
@@ -624,35 +659,36 @@ class LoveHub {
         conversation.scrollTop = conversation.scrollHeight;
     }
 
-    // Real users: Supabase-backed private couple chat ----------------------
+    // Real users: premium Supabase-backed private couple chat --------------
 
     renderRealChat(conversation) {
         const couple = this.currentCouple;
-        const titleEl = document.querySelector('.page[data-page="chat"] .page-title');
         const empty = (html) => {
             conversation.innerHTML = `<div class="chat-empty" style="text-align:center;color:var(--text-secondary);padding:60px 24px;font-size:15px;line-height:1.7">${html}</div>`;
             conversation.scrollTop = 0;
         };
 
         if (!couple) {
-            if (titleEl) titleEl.textContent = 'Messages';
+            this.updateChatHeader('Messages', null);
             empty('Connect with your partner to start chatting.');
             return;
         }
         if (couple.status !== 'active') {
-            if (titleEl) titleEl.textContent = 'Messages';
+            this.updateChatHeader('Messages', null);
             empty('Your invite is still pending.<br>Chat unlocks when your partner accepts.');
             return;
         }
 
-        const partnerName = couple.partner?.display_name || 'Your partner';
-        if (titleEl) titleEl.textContent = partnerName;
+        this._chatPartnerName = couple.partner?.display_name || 'Your partner';
+        this.updateChatHeader(this._chatPartnerName, this._chatPartnerOnline ? 'online' : 'lastSeen', this._chatPartnerLastSeen);
+        this.applyChatBackground();
 
         // Load + subscribe once per couple id; re-render from cache after that.
         if (this._chatCoupleId !== couple.id) {
             this.unsubscribeChat();
             this._chatCoupleId = couple.id;
             this._chatMessages = [];
+            this._chatReactions = {};
             this._chatState = 'loading';
             this.loadChat(couple.id);
         }
@@ -665,14 +701,21 @@ class LoveHub {
             empty('Could not load your messages.<br>Check your connection and try again.');
             return;
         }
-        if (!this._chatMessages.length) {
-            empty('No messages yet.<br>Say something sweet ❤️');
+
+        // Client-side search over the loaded conversation.
+        const query = this._chatSearch.toLowerCase();
+        const list = this._chatSearch
+            ? this._chatMessages.filter((m) => (m.text || '').toLowerCase().includes(query))
+            : this._chatMessages;
+
+        if (!list.length) {
+            empty(this._chatSearch ? 'No messages match your search.' : 'No messages yet.<br>Say something sweet ❤️');
             return;
         }
 
         const myUid = this.currentUser?.id;
         const byDate = {};
-        this._chatMessages.forEach((msg) => {
+        list.forEach((msg) => {
             const date = (msg.timestamp || '').split('T')[0];
             if (!byDate[date]) byDate[date] = [];
             byDate[date].push(msg);
@@ -685,31 +728,202 @@ class LoveHub {
             conversation.appendChild(dateDiv);
 
             byDate[date].forEach((msg) => {
-                const mine = msg.sender_id === myUid;
-                const bubble = document.createElement('div');
-                bubble.className = `message-bubble ${mine ? 'sent' : 'received'}`;
-                const read = mine && msg.read_at ? '<span class="bubble-read">Read</span>' : '';
-                bubble.innerHTML = `<div class="bubble-content">${this.escapeHtml(msg.text)}</div><div class="bubble-time">${this.formatTime(msg.timestamp)}${read}</div>`;
-                conversation.appendChild(bubble);
+                conversation.appendChild(this.buildMessageBubble(msg, myUid));
             });
         });
         conversation.scrollTop = conversation.scrollHeight;
     }
 
+    // One bubble element for a message row (real users).
+    buildMessageBubble(msg, myUid) {
+        const mine = msg.sender_id === myUid;
+        const bubble = document.createElement('div');
+        bubble.className = `message-bubble ${mine ? 'sent' : 'received'}`;
+        bubble.dataset.mid = msg.id;
+        if (msg.deleted_at) bubble.classList.add('deleted');
+
+        const frag = document.createDocumentFragment();
+
+        // Overflow menu (tap-hold on the bubble opens the same sheet).
+        const menu = document.createElement('button');
+        menu.className = 'bubble-menu';
+        menu.innerHTML = '<svg width="13" height="13" class="icon-svg"><use href="#icon-more"/></svg>';
+        menu.addEventListener('click', (e) => { e.stopPropagation(); this.openMessageActions(msg); });
+        frag.appendChild(menu);
+
+        if (msg.pinned) {
+            const pin = document.createElement('span');
+            pin.className = 'bubble-pin';
+            pin.textContent = '📌';
+            frag.appendChild(pin);
+        }
+
+        // Reply preview (snapshot stored server-side at send time).
+        if (msg.reply_to_content) {
+            const reply = document.createElement('div');
+            reply.className = 'bubble-reply';
+            const who = msg.reply_to_sender_id === myUid ? 'You' : (this._chatPartnerName || 'Partner');
+            reply.innerHTML = `<div class="reply-who">${this.escapeHtml(who)}</div><div class="reply-text">${this.escapeHtml(msg.reply_to_content)}</div>`;
+            frag.appendChild(reply);
+        }
+
+        // Content (or a deletion placeholder).
+        const content = document.createElement('div');
+        content.className = 'bubble-content';
+        const shown = msg.deleted_at
+            ? 'Message deleted'
+            : this.isHiddenForMe(msg)
+                ? 'You deleted this message'
+                : (msg.text || '');
+        content.appendChild(document.createTextNode(shown));
+        if (msg.edited_at && !msg.deleted_at && !this.isHiddenForMe(msg)) {
+            const edited = document.createElement('span');
+            edited.className = 'bubble-edited';
+            edited.textContent = 'edited';
+            content.appendChild(edited);
+        }
+        frag.appendChild(content);
+
+        // Reactions.
+        const reactions = this._chatReactions[msg.id];
+        if (reactions && Object.keys(reactions).length) {
+            const row = document.createElement('div');
+            row.className = 'bubble-reactions';
+            Object.keys(reactions).sort().forEach((emoji) => {
+                const chip = document.createElement('button');
+                chip.className = 'reaction-chip';
+                if ((reactions[emoji] || []).includes(myUid)) chip.classList.add('mine');
+                chip.textContent = `${emoji} ${reactions[emoji].length}`;
+                chip.addEventListener('click', (e) => { e.stopPropagation(); this.toggleReaction(msg, emoji); });
+                row.appendChild(chip);
+            });
+            frag.appendChild(row);
+        }
+
+        // Time + status (sent ✓ / delivered ✓✓ / read ✓✓ + Read).
+        const meta = document.createElement('div');
+        meta.className = 'bubble-meta';
+        const time = document.createElement('span');
+        time.className = 'bubble-time';
+        time.textContent = this.formatTime(msg.timestamp);
+        meta.appendChild(time);
+        if (mine && !this.isHiddenForMe(msg)) meta.appendChild(this.buildStatusTicks(msg));
+        frag.appendChild(meta);
+
+        bubble.appendChild(frag);
+        return bubble;
+    }
+
+    buildStatusTicks(msg) {
+        const status = document.createElement('span');
+        status.className = 'bubble-status';
+        if (msg._pending) {
+            status.classList.add('sending');
+            status.textContent = 'Sending…';
+        } else if (msg.read_at) {
+            status.classList.add('read');
+            status.innerHTML = '<span class="tick">✓✓</span> Read';
+            status.title = `Read at ${this.formatTime(msg.read_at)}`;
+        } else if (msg.delivered_at) {
+            status.classList.add('delivered');
+            status.innerHTML = '<span class="tick">✓✓</span>';
+        } else {
+            status.classList.add('sent');
+            status.innerHTML = '<span class="tick">✓</span>';
+        }
+        return status;
+    }
+
+    isHiddenForMe(msg) {
+        return !!msg.deleted_for && msg.deleted_for.includes(this.currentUser?.id);
+    }
+
+    // Rebuild one bubble in place (receipts, edits, deletions, flags…).
+    refreshMessageDom(msg) {
+        const conversation = document.getElementById('chatConversation');
+        if (!conversation || this.currentPage !== 'chat') return;
+        const existing = conversation.querySelector(`.message-bubble[data-mid="${msg.id}"]`);
+        if (!existing) return;
+        const next = this.buildMessageBubble(msg, this.currentUser?.id);
+        existing.replaceWith(next);
+    }
+
+    // Append one message preserving scroll position.
+    appendMessageDom(msg) {
+        const conversation = document.getElementById('chatConversation');
+        if (!conversation || this.currentPage !== 'chat') return;
+        if (this._chatSearch) { this.renderChat(); return; }
+        const wasAtBottom = this._chatAtBottom;
+        const date = (msg.timestamp || '').split('T')[0];
+        const wantDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        const lastDate = conversation.querySelector('.chat-date:last-of-type span')?.textContent || '';
+        if (lastDate !== wantDate) {
+            const dateDiv = document.createElement('div');
+            dateDiv.className = 'chat-date';
+            dateDiv.innerHTML = `<span>${wantDate}</span>`;
+            conversation.appendChild(dateDiv);
+        }
+        conversation.appendChild(this.buildMessageBubble(msg, this.currentUser?.id));
+        if (wasAtBottom) conversation.scrollTop = conversation.scrollHeight;
+    }
+
+    onChatPageOpened() {
+        this.renderChat();
+        this.bindChatScroll();
+        if (this.isRealUser() && this.currentCouple?.status === 'active' && window.LoveHubChat) {
+            window.LoveHubChat.markAsRead(this.currentCouple.id);
+        }
+    }
+
+    bindChatScroll() {
+        const list = document.getElementById('chatConversation');
+        const btn = document.getElementById('chatScrollBtn');
+        if (!list || !btn) return;
+        if (this._chatScrollHandler) list.removeEventListener('scroll', this._chatScrollHandler);
+        const update = () => {
+            const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+            this._chatAtBottom = atBottom;
+            btn.style.display = atBottom ? 'none' : 'flex';
+        };
+        this._chatScrollHandler = update;
+        list.addEventListener('scroll', update, { passive: true });
+        btn.onclick = () => list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+        update();
+    }
+
+    // ---- load + realtime subscriptions ----
+
     async loadChat(coupleId) {
-        const res = await window.LoveHubChat?.getConversation(coupleId);
+        const [convo, reactions, prefs, notifPrefs, coupleSettings] = await Promise.all([
+            window.LoveHubChat?.getConversation(coupleId),
+            window.LoveHubChat?.getReactions(coupleId),
+            window.LoveHubChat?.getChatPreferences(),
+            window.LoveHubChat?.getNotificationPreferences(),
+            window.LoveHubChat?.getCoupleChatSettings(coupleId)
+        ]);
         // A logout or couple switch may have happened while loading.
         if (this._chatCoupleId !== coupleId) return;
-        if (!res?.success) {
+        if (!convo?.success) {
             this._chatState = 'error';
         } else {
-            this._chatMessages = (res.messages || []).map((m) => ({
-                id: m.id,
-                sender_id: m.sender_id,
-                text: m.content,
-                timestamp: m.created_at,
-                read_at: m.read_at
-            }));
+            this._chatMessages = (convo.messages || []).map((m) => this.normalizeMessage(m));
+            this._chatReactions = {};
+            (reactions || []).forEach((r) => {
+                if (!this._chatReactions[r.message_id]) this._chatReactions[r.message_id] = {};
+                if (!this._chatReactions[r.message_id][r.emoji]) this._chatReactions[r.message_id][r.emoji] = [];
+                this._chatReactions[r.message_id][r.emoji].push(r.profile_id);
+            });
+            // Personal prefs win; the couple-shared background is the fallback.
+            this._chatPrefs = prefs || null;
+            this._chatSharedBg = false;
+            if (!prefs && coupleSettings) {
+                this._chatPrefs = {
+                    background_theme: coupleSettings.background_theme || 'dark',
+                    background_color: coupleSettings.background_color || null
+                };
+                this._chatSharedBg = true;
+            }
+            this._chatNotifPrefs = notifPrefs || { messages_enabled: true, couple_requests_enabled: true, events_enabled: true };
             this._chatState = 'ready';
             this.subscribeChat(coupleId);
             window.LoveHubChat?.markAsRead(coupleId);
@@ -717,68 +931,253 @@ class LoveHub {
         this.renderChat();
     }
 
-    // Realtime: new messages and read receipts arrive without a refresh.
+    normalizeMessage(m) {
+        return {
+            id: m.id,
+            sender_id: m.sender_id,
+            text: m.content,
+            timestamp: m.created_at,
+            message_type: m.message_type || 'text',
+            media: m.media || null,
+            read_at: m.read_at,
+            delivered_at: m.delivered_at,
+            edited_at: m.edited_at,
+            edited_by: m.edited_by,
+            reply_to_id: m.reply_to_id,
+            reply_to_content: m.reply_to_content,
+            reply_to_sender_id: m.reply_to_sender_id,
+            deleted_for: m.deleted_for || [],
+            deleted_at: m.deleted_at,
+            pinned: !!m.pinned,
+            favorite: !!m.favorite,
+            saved_to_memories: !!m.saved_to_memories
+        };
+    }
+
+    // Realtime: messages, receipts, reactions, typing, presence, notifications.
     subscribeChat(coupleId) {
-        if (!window.LoveHubChat || this._chatChannel) return;
-        this._chatChannel = window.LoveHubChat.subscribeToMessages(coupleId, (msg, isUpdate) => {
+        if (!window.LoveHubChat) return;
+
+        // 1) Messages (INSERT + UPDATE).
+        this._chatChannel = window.LoveHubChat.subscribeToMessages(coupleId, (row, isUpdate) => {
             if (this._chatCoupleId !== coupleId) return;
             if (isUpdate) {
-                this._chatMessages = this._chatMessages.map((m) =>
-                    m.id === msg.id ? { ...m, read_at: msg.read_at } : m);
-                if (this.currentPage === 'chat') this.renderChat();
+                const idx = this._chatMessages.findIndex((m) => m.id === row.id);
+                if (idx === -1) return;
+                this._chatMessages[idx] = this.normalizeMessage(row);
+                this.refreshMessageDom(this._chatMessages[idx]);
                 return;
             }
-            if (this._chatMessages.some((m) => m.id === msg.id)) return;
-            this._chatMessages = [...this._chatMessages, {
-                id: msg.id,
-                sender_id: msg.sender_id,
-                text: msg.content,
-                timestamp: msg.created_at,
-                read_at: msg.read_at
-            }];
-            if (this.currentPage === 'chat') this.renderChat();
-            // My own message is already read by me — only receipt partner's.
-            if (msg.sender_id !== this.currentUser?.id) window.LoveHubChat?.markAsRead(coupleId);
+            if (this._chatMessages.some((m) => m.id === row.id)) return;
+            const msg = this.normalizeMessage(row);
+            this._chatMessages = [...this._chatMessages, msg];
+            this.appendMessageDom(msg);
+
+            const isMine = msg.sender_id === this.currentUser?.id;
+            if (!isMine) {
+                // Receipts: delivered now, read while on the chat page.
+                window.LoveHubChat.markDelivered(msg.id);
+                if (this.currentPage === 'chat' && document.visibilityState === 'visible') {
+                    window.LoveHubChat.markAsRead(coupleId);
+                } else {
+                    this.notifyNewMessage(msg);
+                }
+            }
+        });
+
+        // 2) Reactions.
+        window.LoveHubChat.subscribeToReactions(coupleId, (row, isDelete) => {
+            if (this._chatCoupleId !== coupleId) return;
+            const map = this._chatReactions[row.message_id] || (this._chatReactions[row.message_id] = {});
+            if (!map[row.emoji]) map[row.emoji] = [];
+            if (isDelete) {
+                map[row.emoji] = map[row.emoji].filter((id) => id !== row.profile_id);
+                if (!map[row.emoji].length) delete map[row.emoji];
+            } else if (!map[row.emoji].includes(row.profile_id)) {
+                map[row.emoji].push(row.profile_id);
+            }
+            const target = this._chatMessages.find((m) => m.id === row.message_id);
+            if (target) this.refreshMessageDom(target);
+        });
+
+        // 3) Typing indicator (partner only, broadcast — never stored).
+        window.LoveHubChat.subscribeTyping(coupleId, (payload) => {
+            if (payload.user_id === this.currentUser?.id) return;
+            this._chatTyping = !!payload.typing;
+            this.updateTypingIndicator();
+        });
+
+        // 4) Presence (partner online / last seen).
+        window.LoveHubChat.trackPresence(coupleId, {
+            onSync: (state) => {
+                const partnerId = this.currentCouple?.partner?.id;
+                const online = Object.values(state || {}).some((list) =>
+                    (list || []).some((p) => p.user_id === partnerId));
+                this._chatPartnerOnline = online;
+                if (!online && this._chatPartnerLastSeen == null && this.currentCouple?.partner?.last_seen_at) {
+                    this._chatPartnerLastSeen = this.currentCouple.partner.last_seen_at;
+                }
+                this.updateChatHeader(this._chatPartnerName || 'Your partner', online ? 'online' : 'lastSeen', this._chatPartnerLastSeen);
+            },
+            onLeave: (left) => {
+                const partnerId = this.currentCouple?.partner?.id;
+                if ((left || []).some((p) => p.user_id === partnerId)) {
+                    this._chatPartnerOnline = false;
+                    this._chatPartnerLastSeen = new Date().toISOString();
+                    window.LoveHubChat?.touchLastSeen();
+                    this.updateChatHeader(this._chatPartnerName || 'Your partner', 'lastSeen', this._chatPartnerLastSeen);
+                }
+            }
         });
     }
 
     unsubscribeChat() {
-        if (this._chatChannel) {
-            window.LoveHubChat?.unsubscribe(this._chatChannel);
-            this._chatChannel = null;
+        window.LoveHubChat?.disconnectAll();
+        this._chatChannel = null;
+        this._chatTyping = false;
+        this._chatPartnerOnline = false;
+        this.updateTypingIndicator();
+    }
+
+    // ---- header / typing / background / notifications ----
+
+    updateChatHeader(name, state, lastSeen) {
+        const titleEl = document.getElementById('chatTitle');
+        const subEl = document.getElementById('chatSub');
+        if (titleEl && name) titleEl.textContent = name;
+        if (!subEl) return;
+        if (!this.isRealUser() || !this.currentCouple || this.currentCouple.status !== 'active') {
+            subEl.innerHTML = '';
+            return;
         }
+        if (state === 'online') {
+            subEl.innerHTML = '<span class="presence-dot online"></span> Active now';
+        } else if (lastSeen) {
+            subEl.innerHTML = `<span class="presence-dot"></span> Last seen ${this.formatLastSeen(lastSeen)}`;
+        } else {
+            subEl.innerHTML = '<span class="presence-dot"></span> Offline';
+        }
+    }
+
+    formatLastSeen(value) {
+        if (!value) return 'recently';
+        const mins = Math.floor(Math.max(0, Date.now() - new Date(value).getTime()) / 60000);
+        if (mins < 1) return 'just now';
+        if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+        const hours = Math.floor(mins / 60);
+        if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+        const days = Math.floor(hours / 24);
+        return `${days} day${days === 1 ? '' : 's'} ago`;
+    }
+
+    updateTypingIndicator() {
+        const el = document.getElementById('chatTyping');
+        if (!el) return;
+        if (this._chatTyping && this._chatPartnerName) {
+            el.classList.add('show');
+            el.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span> ${this.escapeHtml(this._chatPartnerName)} is typing…`;
+        } else {
+            el.classList.remove('show');
+            el.innerHTML = '';
+        }
+    }
+
+    applyChatBackground() {
+        const page = document.getElementById('chatPage');
+        if (!page) return;
+        page.classList.remove('chat-bg-romantic', 'chat-bg-dark', 'chat-bg-minimal', 'chat-bg-sunset', 'chat-bg-hearts');
+        page.style.background = '';
+        const theme = this._chatPrefs?.background_theme || 'dark';
+        const color = this._chatPrefs?.background_color || null;
+        if (theme !== 'custom') {
+            page.classList.add(`chat-bg-${theme}`);
+        } else if (color) {
+            page.style.background = `radial-gradient(circle at 20% 25%, ${color}33, transparent 55%), linear-gradient(160deg, #0b0b0f 0%, ${color}22 100%)`;
+        }
+    }
+
+    notifyNewMessage(msg) {
+        if (!window.LoveHubNotifications) return;
+        if (this._chatNotifPrefs && this._chatNotifPrefs.messages_enabled === false) return;
+        // Never notify while the user is actively looking at the chat.
+        if (document.visibilityState === 'visible' && this.currentPage === 'chat') return;
+        window.LoveHubNotifications.notify(this._chatPartnerName || 'New message', {
+            body: (msg.text || '').slice(0, 120)
+        });
     }
 
     setupChat() {
         const sendBtn = document.getElementById('sendBtn');
         const chatInput = document.getElementById('chatInput');
-        
+        const counter = document.getElementById('chatCounter');
+        const searchBtn = document.getElementById('chatSearchBtn');
+        const searchBar = document.getElementById('chatSearchBar');
+        const searchInput = document.getElementById('chatSearchInput');
+        const searchClose = document.getElementById('chatSearchClose');
+        const settingsBtn = document.getElementById('chatSettingsBtn');
+        const replyPreview = document.getElementById('chatReplyPreview');
+        const list = document.getElementById('chatConversation');
+
+        const updateComposer = () => {
+            const len = chatInput.value.length;
+            if (counter) {
+                counter.textContent = len > 0 ? `${len}/4000` : '';
+                counter.style.color = len > 3500 ? '#FF9F0A' : '';
+            }
+            sendBtn.disabled = !(len > 0) || this._chatSending;
+            sendBtn.classList.toggle('sending', !!this._chatSending);
+            // Auto-grow textarea (multi-line support).
+            chatInput.style.height = 'auto';
+            chatInput.style.height = Math.min(chatInput.scrollHeight, 110) + 'px';
+            // Typing broadcast with idle timeout (real users, active couple).
+            if (this.isRealUser() && this.currentCouple?.status === 'active') {
+                if (len > 0 && !this._chatSending) {
+                    window.LoveHubChat?.startTyping(this.currentCouple.id);
+                    clearTimeout(this._chatTypingTimer);
+                    this._chatTypingTimer = setTimeout(() => window.LoveHubChat?.stopTyping(this.currentCouple.id), 2500);
+                } else {
+                    clearTimeout(this._chatTypingTimer);
+                    window.LoveHubChat?.stopTyping(this.currentCouple.id);
+                }
+            }
+        };
+
+        const clearComposer = () => {
+            chatInput.value = '';
+            this._chatReplyTo = null;
+            if (replyPreview) replyPreview.style.display = 'none';
+            updateComposer();
+        };
+
         const sendMessage = async () => {
             const text = chatInput.value.trim();
-            if (!text) return;
+            if (!text || this._chatSending) return;
 
-            // Real accounts send through Supabase (RLS-scoped to their couple).
+            // Real accounts: RPC-backed send (RLS-scoped to their couple).
             if (this.isRealUser()) {
                 const couple = this.currentCouple;
                 if (!couple || couple.status !== 'active') {
                     this.showToast(couple ? 'Chat unlocks when your partner accepts your invite.' : 'Connect with your partner to start chatting.');
                     return;
                 }
-                const res = await window.LoveHubChat?.sendMessage(couple.id, text);
+                this._chatSending = true;
+                updateComposer();
+                clearTimeout(this._chatTypingTimer);
+                window.LoveHubChat?.stopTyping(couple.id);
+
+                const res = await window.LoveHubChat?.sendMessage(couple.id, text, { replyToId: this._chatReplyTo?.id || null });
+                this._chatSending = false;
                 if (!res?.success) {
+                    updateComposer();
                     this.showToast(res?.error || 'Could not send message');
                     return;
                 }
-                chatInput.value = '';
-                // Realtime usually echoes it back; append now for instant UI.
-                this._chatMessages = [...this._chatMessages, {
-                    id: res.message.id,
-                    sender_id: res.message.sender_id,
-                    text: res.message.content,
-                    timestamp: res.message.created_at,
-                    read_at: res.message.read_at
-                }];
-                this.renderChat();
+                clearComposer();
+                const msg = this.normalizeMessage(res.message);
+                const idx = this._chatMessages.findIndex((m) => m._pending);
+                if (idx !== -1) this._chatMessages[idx] = msg;
+                else this._chatMessages = [...this._chatMessages, msg];
+                this.appendMessageDom(msg);
                 return;
             }
 
@@ -787,6 +1186,7 @@ class LoveHub {
                 return;
             }
 
+            // Legacy demo path stays fully intact.
             const messages = storage.get('messages') || LoveHubData.messages;
             messages.push({
                 id: Date.now().toString(),
@@ -796,13 +1196,449 @@ class LoveHub {
                 type: 'sent'
             });
             storage.set('messages', messages);
-            chatInput.value = '';
+            clearComposer();
             this.renderChat();
             setTimeout(() => this.simulateReply(), 1500);
         };
-        
-        if (sendBtn) sendBtn.addEventListener('click', sendMessage);
-        if (chatInput) chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+        sendBtn.addEventListener('click', sendMessage);
+        chatInput.addEventListener('input', updateComposer);
+        // Enter = send, Shift + Enter = new line.
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Reply preview close (delegated — content is dynamic).
+        if (replyPreview) {
+            replyPreview.addEventListener('click', (e) => {
+                if (e.target.closest('button')) clearComposer();
+            });
+        }
+
+        // Search.
+        if (searchBtn) {
+            searchBtn.addEventListener('click', () => {
+                const show = searchBar.style.display === 'none';
+                searchBar.style.display = show ? 'flex' : 'none';
+                if (show) searchInput.focus(); else this.setChatSearch('');
+            });
+        }
+        if (searchInput) searchInput.addEventListener('input', (e) => this.setChatSearch(e.target.value));
+        if (searchClose) {
+            searchClose.addEventListener('click', () => {
+                searchBar.style.display = 'none';
+                searchInput.value = '';
+                this.setChatSearch('');
+            });
+        }
+
+        // Chat settings sheet.
+        if (settingsBtn) settingsBtn.addEventListener('click', () => this.openChatSettings());
+
+        // Long-press / right-click on a bubble opens the message actions.
+        if (list) {
+            let holdTimer = null;
+            list.addEventListener('pointerdown', (e) => {
+                const bubble = e.target.closest('.message-bubble');
+                if (!bubble) return;
+                holdTimer = setTimeout(() => {
+                    const msg = this._chatMessages.find((m) => m.id === bubble.dataset.mid);
+                    if (msg) this.openMessageActions(msg);
+                }, 500);
+            });
+            ['pointerup', 'pointerleave', 'pointercancel'].forEach((evt) =>
+                list.addEventListener(evt, () => clearTimeout(holdTimer)));
+            list.addEventListener('contextmenu', (e) => {
+                const bubble = e.target.closest('.message-bubble');
+                if (!bubble) return;
+                e.preventDefault();
+                const msg = this._chatMessages.find((m) => m.id === bubble.dataset.mid);
+                if (msg) this.openMessageActions(msg);
+            });
+        }
+
+        // Flush presence + typing when the app goes to the background.
+        const flushPresence = () => {
+            if (!this.isRealUser() || !this.currentCouple) return;
+            window.LoveHubChat?.stopTyping(this.currentCouple.id);
+            window.LoveHubChat?.untrackPresence();
+            window.LoveHubChat?.touchLastSeen();
+        };
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') flushPresence();
+        });
+        window.addEventListener('pagehide', flushPresence);
+
+        updateComposer();
+    }
+
+    // ---- composer helpers ----
+
+    resetChatComposer() {
+        const input = document.getElementById('chatInput');
+        if (input) { input.value = ''; input.style.height = 'auto'; }
+        const counter = document.getElementById('chatCounter');
+        if (counter) counter.textContent = '';
+        const reply = document.getElementById('chatReplyPreview');
+        if (reply) reply.style.display = 'none';
+        const btn = document.getElementById('sendBtn');
+        if (btn) { btn.disabled = true; btn.classList.remove('sending'); }
+        const searchInput = document.getElementById('chatSearchInput');
+        if (searchInput) searchInput.value = '';
+        const searchBar = document.getElementById('chatSearchBar');
+        if (searchBar) searchBar.style.display = 'none';
+        this._chatReplyTo = null;
+        this._chatSending = false;
+    }
+
+    setReply(msg) {
+        if (!this.isRealUser()) return;
+        this._chatReplyTo = msg;
+        const preview = document.getElementById('chatReplyPreview');
+        if (!preview) return;
+        const mine = msg.sender_id === this.currentUser?.id;
+        const who = mine ? 'You' : (this._chatPartnerName || 'Partner');
+        preview.style.display = 'flex';
+        preview.innerHTML = `<span class="reply-who">${this.escapeHtml(who)}</span><span class="reply-text">${this.escapeHtml((msg.text || '').slice(0, 80))}</span><button><svg width="13" height="13" class="icon-svg"><use href="#icon-close"/></svg></button>`;
+        document.getElementById('chatInput')?.focus();
+    }
+
+    setChatSearch(value) {
+        this._chatSearch = (value || '').trim();
+        this.renderChat();
+    }
+
+    // ---- message actions ----
+
+    _ensureChatSheets() {
+        if (document.getElementById('chatActionSheet')) return;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'action-sheet-overlay';
+        overlay.id = 'chatActionSheet';
+        overlay.innerHTML = `<div class="action-sheet">
+            <div class="action-sheet-head">
+                <div class="as-title" id="asTitle">Message</div>
+                <div class="as-sub" id="asSub"></div>
+            </div>
+            <div class="action-sheet-grid" id="asReactions"></div>
+            <div id="asActions"></div>
+            <button class="action-cancel" id="asCancel">Cancel</button>
+        </div>`;
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) this.closeChatSheets(); });
+        overlay.querySelector('#asCancel').addEventListener('click', () => this.closeChatSheets());
+        document.body.appendChild(overlay);
+
+        const settings = document.createElement('div');
+        settings.className = 'chat-settings-overlay';
+        settings.id = 'chatSettingsSheet';
+        settings.innerHTML = `<div class="chat-settings-sheet">
+            <h2>Chat Settings</h2>
+            <div class="chat-settings-sub">Customize your private space</div>
+            <div id="csBody"></div>
+            <button class="cs-close" id="csClose">Done</button>
+        </div>`;
+        settings.addEventListener('click', (e) => { if (e.target === settings) this.closeChatSheets(); });
+        settings.querySelector('#csClose').addEventListener('click', () => this.closeChatSheets());
+        document.body.appendChild(settings);
+    }
+
+    closeChatSheets() {
+        const a = document.getElementById('chatActionSheet');
+        const s = document.getElementById('chatSettingsSheet');
+        if (a) a.classList.remove('active');
+        if (s) s.classList.remove('active');
+    }
+
+    openMessageActions(msg) {
+        this._ensureChatSheets();
+        const overlay = document.getElementById('chatActionSheet');
+        const myUid = this.currentUser?.id;
+        const mine = msg.sender_id === myUid;
+        document.getElementById('asTitle').textContent = mine ? 'Your message' : `${this._chatPartnerName || 'Partner'}'s message`;
+        document.getElementById('asSub').textContent = this.formatTime(msg.timestamp);
+
+        const reactionsRow = document.getElementById('asReactions');
+        reactionsRow.innerHTML = '';
+        ['❤️', '😂', '😍', '🥰', '👍'].forEach((emoji) => {
+            const btn = document.createElement('button');
+            btn.className = 'react-quick';
+            btn.textContent = emoji;
+            btn.addEventListener('click', async () => {
+                await this.toggleReaction(msg, emoji);
+                this.closeChatSheets();
+            });
+            reactionsRow.appendChild(btn);
+        });
+
+        const actions = document.getElementById('asActions');
+        actions.innerHTML = '';
+        const addAction = (label, icon, fn, danger) => {
+            const btn = document.createElement('button');
+            btn.className = `action-item${danger ? ' danger' : ''}`;
+            btn.innerHTML = `<svg class="icon-svg"><use href="#icon-${icon}"/></svg><span>${label}</span>`;
+            btn.addEventListener('click', async () => { await fn(); this.closeChatSheets(); });
+            actions.appendChild(btn);
+        };
+
+        const hidden = this.isHiddenForMe(msg) || !!msg.deleted_at;
+        addAction('Reply', 'reply', () => this.setReply(msg));
+        addAction(msg.pinned ? 'Unpin' : 'Pin', 'pin', () => this.toggleMessageFlag(msg, 'pinned'));
+        addAction(msg.favorite ? 'Remove Favorite' : 'Favorite', 'star', () => this.toggleMessageFlag(msg, 'favorite'));
+        addAction(msg.saved_to_memories ? 'Remove from Memories' : 'Save to Memories', 'bookmark', () => this.toggleMessageFlag(msg, 'saved_to_memories'));
+        if (mine && !hidden) addAction('Edit', 'edit', () => this.startEditMessage(msg));
+        if (!hidden) addAction('Delete for me', 'trash', () => this.deleteMessage(msg, 'me'), true);
+        if (mine && !hidden) addAction('Delete for everyone', 'trash', () => this.deleteMessage(msg, 'everyone'), true);
+
+        overlay.classList.add('active');
+    }
+
+    async toggleMessageFlag(msg, flag) {
+        if (!window.LoveHubChat) return;
+        const res = await window.LoveHubChat.toggleFlag(msg.id, flag);
+        if (!res.success) { this.showToast(res.error || 'Could not update'); return; }
+        const target = this._chatMessages.find((m) => m.id === msg.id);
+        if (target) {
+            target[flag] = !target[flag];
+            this.refreshMessageDom(target);
+            if (flag === 'saved_to_memories') this.showToast(target[flag] ? 'Saved to Memories ❤️' : 'Removed from Memories');
+            else if (flag === 'pinned') this.showToast(target[flag] ? 'Message pinned 📌' : 'Message unpinned');
+            else if (flag === 'favorite') this.showToast(target[flag] ? 'Added to favorites ⭐' : 'Removed from favorites');
+        }
+    }
+
+    async toggleReaction(msg, emoji) {
+        if (!window.LoveHubChat) return;
+        const res = await window.LoveHubChat.react(msg.id, emoji);
+        if (!res.success) { this.showToast(res.error || 'Could not react'); return; }
+        // Patch locally for snappiness; the realtime channel keeps it in sync.
+        const map = this._chatReactions[msg.id] || (this._chatReactions[msg.id] = {});
+        if (!map[emoji]) map[emoji] = [];
+        const me = this.currentUser?.id;
+        if (res.added) { if (!map[emoji].includes(me)) map[emoji].push(me); }
+        else map[emoji] = map[emoji].filter((id) => id !== me);
+        if (!map[emoji].length) delete map[emoji];
+        const target = this._chatMessages.find((m) => m.id === msg.id);
+        if (target) this.refreshMessageDom(target);
+    }
+
+    async deleteMessage(msg, scope) {
+        if (!window.LoveHubChat) return;
+        if (scope === 'everyone' && !confirm('Delete this message for both of you? This cannot be undone.')) return;
+        if (scope === 'me' && !confirm('Delete this message for you? Your partner will still see it.')) return;
+        const res = scope === 'me'
+            ? await window.LoveHubChat.deleteForMe(msg.id)
+            : await window.LoveHubChat.deleteForEveryone(msg.id);
+        if (!res.success) { this.showToast(res.error || 'Could not delete'); return; }
+        const target = this._chatMessages.find((m) => m.id === msg.id);
+        if (target) {
+            if (scope === 'me') target.deleted_for = [...(target.deleted_for || []), this.currentUser?.id];
+            else { target.deleted_at = new Date().toISOString(); target.text = null; }
+            this.refreshMessageDom(target);
+            this.showToast(scope === 'me' ? 'Message deleted for you' : 'Message deleted for everyone');
+        }
+    }
+
+    startEditMessage(msg) {
+        this._ensureChatSheets();
+        const sheet = document.getElementById('chatActionSheet');
+        if (sheet) sheet.classList.remove('active');
+        const conversation = document.getElementById('chatConversation');
+        const bubble = conversation?.querySelector(`.message-bubble[data-mid="${msg.id}"]`);
+        if (!bubble) return;
+        const content = bubble.querySelector('.bubble-content');
+        if (!content) return;
+
+        const box = document.createElement('div');
+        box.className = 'bubble-edit-box';
+        const area = document.createElement('textarea');
+        area.value = msg.text || '';
+        const row = document.createElement('div');
+        row.className = 'row';
+        const save = document.createElement('button');
+        save.className = 'save';
+        save.textContent = 'Save';
+        const cancel = document.createElement('button');
+        cancel.className = 'cancel';
+        cancel.textContent = 'Cancel';
+        row.appendChild(save);
+        row.appendChild(cancel);
+        box.appendChild(area);
+        box.appendChild(row);
+        content.replaceWith(box);
+        area.focus();
+
+        cancel.addEventListener('click', () => box.replaceWith(content));
+        save.addEventListener('click', async () => {
+            const res = await window.LoveHubChat?.editMessage(msg.id, area.value);
+            if (!res?.success) { this.showToast(res?.error || 'Could not edit'); return; }
+            const idx = this._chatMessages.findIndex((m) => m.id === msg.id);
+            if (idx !== -1) {
+                this._chatMessages[idx] = this.normalizeMessage(res.message);
+                this.refreshMessageDom(this._chatMessages[idx]);
+            }
+            this.showToast('Message edited');
+        });
+    }
+
+    // ---- chat settings sheet ----
+
+    async openChatSettings() {
+        this._ensureChatSheets();
+        const sheet = document.getElementById('chatSettingsSheet');
+        const body = document.getElementById('csBody');
+        if (!body) return;
+
+        const couple = this.currentCouple;
+        const prefs = this._chatPrefs || { background_theme: 'dark', background_color: null };
+        const notif = this._chatNotifPrefs || { messages_enabled: true, couple_requests_enabled: true, events_enabled: true };
+        const perm = window.LoveHubNotifications?.permission() || 'unsupported';
+        const theme = prefs.background_theme || 'dark';
+        const color = prefs.background_color || '';
+        const themes = ['romantic', 'dark', 'minimal', 'sunset', 'hearts', 'custom'];
+
+        body.innerHTML = `
+            <div class="cs-section">
+                <div class="cs-section-title">Background</div>
+                <div class="theme-grid">${themes.map((t) =>
+                    `<button class="theme-cell ${t}${t === theme ? ' active' : ''}" data-theme="${t}">${t[0].toUpperCase()}${t.slice(1)}</button>`).join('')}
+                </div>
+                <div class="cs-color-row" style="${theme === 'custom' ? 'display:flex' : 'display:none'}">
+                    <input type="color" id="csColorPicker" value="${color || '#FF375F'}">
+                    <input type="text" id="csColorText" placeholder="#FF375F" value="${this.escapeHtml(color)}">
+                </div>
+                <div class="cs-note">Your personal choice. Toggle below to share the same background with your partner.</div>
+            </div>
+            <div class="cs-section">
+                <div class="cs-toggle">
+                    <div><div class="lbl">Share with partner</div><div class="sub">Both of you see the same background</div></div>
+                    <button class="switch ${this._chatSharedBg ? 'on' : ''}" id="csSharedSwitch"></button>
+                </div>
+            </div>
+            <div class="cs-section">
+                <div class="cs-section-title">Notifications</div>
+                <div class="cs-toggle">
+                    <div><div class="lbl">New messages</div><div class="sub">Alert me about new messages</div></div>
+                    <button class="switch ${notif.messages_enabled ? 'on' : ''}" data-pref="messages_enabled"></button>
+                </div>
+                <div class="cs-toggle">
+                    <div><div class="lbl">Couple requests</div><div class="sub">Invites and join requests</div></div>
+                    <button class="switch ${notif.couple_requests_enabled ? 'on' : ''}" data-pref="couple_requests_enabled"></button>
+                </div>
+                <div class="cs-toggle">
+                    <div><div class="lbl">LoveHub events</div><div class="sub">Anniversaries and important moments</div></div>
+                    <button class="switch ${notif.events_enabled ? 'on' : ''}" data-pref="events_enabled"></button>
+                </div>
+                ${perm === 'denied'
+                    ? '<div class="permission-note">Notifications are blocked in your browser. Enable them in site settings.</div>'
+                    : perm === 'unsupported'
+                        ? '<div class="permission-note">This browser does not support notifications.</div>'
+                        : `<button class="login-submit" id="csEnableNotifications" style="margin:0">${perm === 'granted' ? 'Notifications enabled ✓' : 'Enable notifications'}</button>`}
+            </div>
+            <div class="cs-section">
+                <div class="cs-section-title">Chat statistics</div>
+                <div class="cs-stats" id="csStats"><div class="cs-stat"><div class="v">…</div><div class="k">Loading</div></div></div>
+                <div class="cs-note">Days together: <b>${this.getDaysTogether().toLocaleString()}</b></div>
+            </div>
+        `;
+
+        // Theme picker.
+        body.querySelectorAll('.theme-cell').forEach((cell) => {
+            cell.addEventListener('click', async () => {
+                const t = cell.dataset.theme;
+                body.querySelector('.cs-color-row').style.display = t === 'custom' ? 'flex' : 'none';
+                this._chatPrefs = { ...(this._chatPrefs || {}), background_theme: t };
+                this.persistChatBackground(t, t === 'custom' ? this._chatPrefs.background_color || null : null);
+                this.applyChatBackground();
+                body.querySelectorAll('.theme-cell').forEach((c) => c.classList.toggle('active', c.dataset.theme === t));
+            });
+        });
+
+        // Custom color.
+        const colorPicker = body.querySelector('#csColorPicker');
+        const colorText = body.querySelector('#csColorText');
+        const applyColor = (v) => {
+            if (!v) return;
+            this._chatPrefs = { ...(this._chatPrefs || {}), background_theme: 'custom', background_color: v };
+            this.persistChatBackground('custom', v);
+            this.applyChatBackground();
+        };
+        if (colorPicker) colorPicker.addEventListener('input', (e) => applyColor(e.target.value));
+        if (colorText) colorText.addEventListener('change', (e) => applyColor(e.target.value.trim()));
+
+        // Share-with-partner toggle.
+        const sharedSwitch = body.querySelector('#csSharedSwitch');
+        if (sharedSwitch) {
+            sharedSwitch.addEventListener('click', async () => {
+                const next = !this._chatSharedBg;
+                this._chatSharedBg = next;
+                sharedSwitch.classList.toggle('on', next);
+                if (next && couple) {
+                    const res = await window.LoveHubChat?.saveCoupleChatSettings(couple.id, {
+                        background_theme: this._chatPrefs?.background_theme || 'dark',
+                        background_color: this._chatPrefs?.background_color || null
+                    });
+                    if (!res?.success) this.showToast(res?.error || 'Could not share background');
+                }
+            });
+        }
+
+        // Notification toggles.
+        body.querySelectorAll('[data-pref]').forEach((sw) => {
+            sw.addEventListener('click', async () => {
+                const key = sw.dataset.pref;
+                const next = !this._chatNotifPrefs[key];
+                this._chatNotifPrefs = { ...(this._chatNotifPrefs || {}), [key]: next };
+                sw.classList.toggle('on', next);
+                const res = await window.LoveHubChat?.saveNotificationPreferences(this._chatNotifPrefs);
+                if (!res?.success) this.showToast(res?.error || 'Could not save preference');
+            });
+        });
+
+        // Permission flow (must be a user gesture).
+        const enableBtn = body.querySelector('#csEnableNotifications');
+        if (enableBtn) {
+            enableBtn.addEventListener('click', async () => {
+                const res = await window.LoveHubNotifications?.requestPermission();
+                if (res?.success) {
+                    this.showToast('Notifications enabled ❤️');
+                    enableBtn.textContent = 'Notifications enabled ✓';
+                } else if (res?.permission === 'denied') {
+                    this.showToast('Notifications blocked — enable them in browser settings');
+                } else {
+                    this.showToast(res?.error || 'Could not enable notifications');
+                }
+            });
+        }
+
+        // Statistics.
+        this.loadChatStats(body, couple?.id);
+
+        sheet.classList.add('active');
+    }
+
+    async loadChatStats(body, coupleId) {
+        const box = body.querySelector('#csStats');
+        if (!box || !coupleId) return;
+        const stats = await window.LoveHubChat?.getChatStats(coupleId);
+        if (!stats) return;
+        box.innerHTML = `
+            <div class="cs-stat"><div class="v">${stats.sent.toLocaleString()}</div><div class="k">Sent</div></div>
+            <div class="cs-stat"><div class="v">${stats.received.toLocaleString()}</div><div class="k">Received</div></div>
+            <div class="cs-stat"><div class="v">${stats.topEmoji.length ? stats.topEmoji.join('') : '—'}</div><div class="k">Top emoji</div></div>`;
+    }
+
+    async persistChatBackground(theme, color) {
+        const couple = this.currentCouple;
+        const prefs = { background_theme: theme, background_color: color || null };
+        const res = await window.LoveHubChat?.saveChatPreferences(prefs);
+        if (res?.success) this._chatPrefs = { ...(this._chatPrefs || {}), ...prefs };
+        if (this._chatSharedBg && couple) {
+            await window.LoveHubChat?.saveCoupleChatSettings(couple.id, prefs);
+        }
     }
 
     simulateReply() {
