@@ -95,6 +95,11 @@
     wrap(proto, 'resetChatComposer', function () {
         this.setUploadUi(false);
         this.closeMediaPreview(true);
+        // Collapse the '+' media row back after send / logout / couple switch.
+        const row = document.getElementById('chatMediaRow');
+        const toggle = document.getElementById('chatMediaToggle');
+        if (row) row.style.display = 'none';
+        if (toggle) toggle.classList.remove('active');
     });
 
     // =====================================================================
@@ -248,8 +253,8 @@
 
     proto.buildMediaContent = function (msg) {
         switch (msg.message_type) {
-            case 'image':
-            case 'gif': return this.buildImageBubble(msg);
+            case 'image': return this.buildImageBubble(msg);
+            case 'gif': return this.buildGifBubble(msg);
             case 'video': return this.buildVideoBubble(msg);
             case 'voice':
             case 'audio': return this.buildVoiceBubble(msg);
@@ -273,18 +278,38 @@
             if (url) img.src = url;
             else wrap.innerHTML = '<div class="msg-error-note" style="padding:10px">Media unavailable</div>';
         });
+        if (msg.text) {
+            const cap = document.createElement('div');
+            cap.className = 'media-caption';
+            cap.textContent = msg.text;
+            wrap.appendChild(cap);
+        }
         return wrap;
     };
 
+    // Telegram-style round video bubble: circular thumb, play overlay, inline
+    // play/pause. Tapping the video itself opens the fullscreen viewer.
     proto.buildVideoBubble = function (msg) {
+        const block = document.createElement('div');
+        block.className = 'bubble-video-block';
         const wrap = document.createElement('div');
-        wrap.className = 'bubble-media';
+        wrap.className = 'bubble-media video-round';
         const video = document.createElement('video');
         video.controls = false;
         video.preload = 'metadata';
         video.playsInline = true;
         video.addEventListener('click', () => this.openMediaViewer(msg, 'video'));
         wrap.appendChild(video);
+        const play = document.createElement('button');
+        play.className = 'video-play-btn';
+        play.innerHTML = '<svg class="icon-svg"><use href="#icon-play"/></svg>';
+        const togglePlay = () => {
+            if (video.paused) { video.play(); play.style.display = 'none'; }
+            else { video.pause(); play.style.display = ''; }
+        };
+        play.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
+        video.addEventListener('ended', () => { play.style.display = ''; });
+        wrap.appendChild(play);
         if (msg.duration) {
             const badge = document.createElement('span');
             badge.className = 'media-dur';
@@ -293,7 +318,14 @@
         }
         this.getSignedMediaUrl(msg.media_url).then((url) => { if (url) video.src = url; });
         this.getSignedMediaUrl(msg.thumbnail_url).then((url) => { if (url) video.poster = url; });
-        return wrap;
+        block.appendChild(wrap);
+        if (msg.text) {
+            const cap = document.createElement('div');
+            cap.className = 'media-caption';
+            cap.textContent = msg.text;
+            block.appendChild(cap);
+        }
+        return block;
     };
 
     proto.buildVoiceBubble = function (msg) {
@@ -422,6 +454,21 @@
         } else {
             wrap.textContent = msg.text || '❤️';
             wrap.classList.add('sticker-pulse');
+        }
+        return wrap;
+    };
+
+    // Animated emoji GIF messages (offline-first, CSS-animated like stickers).
+    proto.buildGifBubble = function (msg) {
+        const wrap = document.createElement('div');
+        wrap.className = 'gif-bubble';
+        const def = this._gifRegistry().find((g) => g.id === (msg.text || ''));
+        if (def) {
+            wrap.classList.add('gif-' + def.anim);
+            wrap.textContent = def.emoji;
+        } else {
+            wrap.classList.add('gif-pulse');
+            wrap.textContent = msg.text || '💫';
         }
         return wrap;
     };
@@ -612,6 +659,18 @@
     // ---- media toolbar + uploads ----
 
     proto.setupChatMedia = function () {
+        // '+' toggle: reveal / hide the media tool row (Phase 3.3 composer).
+        const toggle = document.getElementById('chatMediaToggle');
+        const mediaRow = document.getElementById('chatMediaRow');
+        if (toggle && mediaRow) {
+            toggle.addEventListener('click', () => {
+                const open = mediaRow.style.display !== 'flex';
+                mediaRow.style.display = open ? 'flex' : 'none';
+                toggle.classList.toggle('active', open);
+                toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                if (open) window.LoveHubSounds?.play('send');
+            });
+        }
         document.querySelectorAll('.media-tool').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const kind = btn.dataset.media;
@@ -626,6 +685,7 @@
                 else if (kind === 'voice') this.openVoiceSheet();
                 else if (kind === 'draw') this.openDrawSheet();
                 else if (kind === 'sticker') this.openStickerSheet();
+                else if (kind === 'gif') this.openStickerSheet('gif');
             });
         });
         const imageInput = document.getElementById('chatImageInput');
@@ -642,6 +702,7 @@
         if (!file) return;
         const blob = await this.compressImage(file);
         if (!blob) { this.showToast('Could not read image'); return; }
+        this._mediaEdit = { rotate: 0, flipH: false, brightness: 0, text: '' };
         this._pendingMedia = { kind: 'image', blob, name: file.name || (fromCamera ? 'camera.jpg' : 'photo.jpg'), size: blob.size, mime: blob.type || 'image/jpeg' };
         this.showMediaPreview(this._pendingMedia);
     };
@@ -715,20 +776,167 @@
         const stage = document.getElementById('mediaPreviewStage');
         const label = document.getElementById('mediaPreviewLabel');
         if (!overlay || !stage) return;
+        const oldEdit = document.getElementById('mediaPreviewEdit');
+        if (oldEdit) oldEdit.remove();
+        stage.classList.remove('video-round');
         stage.innerHTML = '';
+        this._mediaEdit = this._mediaEdit || { rotate: 0, flipH: false, brightness: 0, text: '' };
         if (label) label.textContent = pending.kind === 'video' ? 'Video preview' : 'Photo preview';
         if (pending.kind === 'video') {
+            // Telegram-style round preview: thumbnail + play overlay.
+            stage.classList.add('video-round');
             const v = document.createElement('video');
             v.src = URL.createObjectURL(pending.blob);
-            v.controls = true;
+            v.muted = true;
             v.playsInline = true;
+            v.preload = 'metadata';
             stage.appendChild(v);
+            const play = document.createElement('button');
+            play.className = 'video-play-btn';
+            play.innerHTML = '<svg class="icon-svg"><use href="#icon-play"/></svg>';
+            stage.appendChild(play);
+            const toggle = () => {
+                if (v.paused) { v.play(); play.style.display = 'none'; }
+                else { v.pause(); play.style.display = ''; }
+            };
+            play.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+            v.addEventListener('click', toggle);
+            v.addEventListener('ended', () => { play.style.display = ''; });
         } else {
-            const img = document.createElement('img');
-            img.src = URL.createObjectURL(pending.blob);
-            stage.appendChild(img);
+            this.renderPendingImagePreview(stage, pending);
+            const edit = this.buildMediaEditor();
+            stage.parentElement.insertBefore(edit, stage);
         }
         overlay.classList.add('active');
+    };
+
+    // ---- premium photo editor (Phase 3.3): rotate / flip / brightness / caption ----
+
+    proto.buildMediaEditor = function () {
+        const ed = this._mediaEdit || (this._mediaEdit = { rotate: 0, flipH: false, brightness: 0, text: '' });
+        const box = document.createElement('div');
+        box.id = 'mediaPreviewEdit';
+        const toolbar = document.createElement('div');
+        toolbar.className = 'media-edit-toolbar';
+        const rotate = document.createElement('button');
+        rotate.type = 'button';
+        rotate.className = 'media-edit-btn';
+        rotate.innerHTML = '⟳ Rotate';
+        rotate.addEventListener('click', () => { ed.rotate += 90; this.renderPendingImagePreview(document.getElementById('mediaPreviewStage')); });
+        const flip = document.createElement('button');
+        flip.type = 'button';
+        flip.className = 'media-edit-btn';
+        flip.innerHTML = '⇋ Flip';
+        flip.addEventListener('click', () => { ed.flipH = !ed.flipH; this.renderPendingImagePreview(document.getElementById('mediaPreviewStage')); });
+        const brightWrap = document.createElement('label');
+        brightWrap.className = 'media-edit-brightness';
+        brightWrap.innerHTML = '<span>☀️</span>';
+        const range = document.createElement('input');
+        range.type = 'range';
+        range.min = -60;
+        range.max = 60;
+        range.value = 0;
+        range.addEventListener('input', () => { ed.brightness = Number(range.value) / 100; this.renderPendingImagePreview(document.getElementById('mediaPreviewStage')); });
+        brightWrap.appendChild(range);
+        toolbar.appendChild(rotate);
+        toolbar.appendChild(flip);
+        toolbar.appendChild(brightWrap);
+        const textbox = document.createElement('div');
+        textbox.className = 'media-edit-textbox';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'Add a caption…';
+        input.maxLength = 120;
+        input.value = ed.text || '';
+        input.addEventListener('input', () => { ed.text = input.value; this.renderPendingImagePreview(document.getElementById('mediaPreviewStage')); });
+        textbox.appendChild(input);
+        box.appendChild(toolbar);
+        box.appendChild(textbox);
+        return box;
+    };
+
+    // Live canvas preview reflecting the current edit state (no blob round-trip).
+    proto.renderPendingImagePreview = function (stage, pending) {
+        pending = pending || this._pendingMedia;
+        if (!stage || !pending) return;
+        const ed = this._mediaEdit || {};
+        stage.innerHTML = '';
+        const canvas = document.createElement('canvas');
+        stage.appendChild(canvas);
+        const url = URL.createObjectURL(pending.blob);
+        const img = new Image();
+        img.onload = () => {
+            let w = img.naturalWidth || img.width;
+            let h = img.naturalHeight || img.height;
+            const rot = ((ed.rotate || 0) % 360 + 360) % 360;
+            if (rot === 90 || rot === 270) { const t = w; w = h; h = t; }
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.translate(w / 2, h / 2);
+            ctx.rotate((rot * Math.PI) / 180);
+            ctx.scale(ed.flipH ? -1 : 1, 1);
+            ctx.filter = 'brightness(' + (1 + (ed.brightness || 0)) + ')';
+            ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2, img.naturalWidth, img.naturalHeight);
+            ctx.filter = 'none';
+            if (ed.text) {
+                ctx.font = '600 22px Inter, system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+                ctx.shadowBlur = 10;
+                ctx.fillStyle = '#fff';
+                const lines = String(ed.text).split('\n');
+                let y = h - 26;
+                for (let i = lines.length - 1; i >= 0; i--) { ctx.fillText(lines[i], w / 2, y); y -= 30; }
+            }
+            URL.revokeObjectURL(url);
+        };
+        img.onerror = () => URL.revokeObjectURL(url);
+        img.src = url;
+    };
+
+    // Bake the edit state into the final JPEG that gets uploaded.
+    proto.applyPendingImageEdits = function (pending) {
+        const ed = this._mediaEdit || {};
+        return new Promise((resolve) => {
+            const url = URL.createObjectURL(pending.blob);
+            const img = new Image();
+            img.onload = () => {
+                let w = img.naturalWidth || img.width;
+                let h = img.naturalHeight || img.height;
+                const rot = ((ed.rotate || 0) % 360 + 360) % 360;
+                if (rot === 90 || rot === 270) { const t = w; w = h; h = t; }
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.translate(w / 2, h / 2);
+                ctx.rotate((rot * Math.PI) / 180);
+                ctx.scale(ed.flipH ? -1 : 1, 1);
+                ctx.filter = 'brightness(' + (1 + (ed.brightness || 0)) + ')';
+                ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2, img.naturalWidth, img.naturalHeight);
+                ctx.filter = 'none';
+                if (ed.text) {
+                    ctx.font = '600 22px Inter, system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+                    ctx.shadowBlur = 10;
+                    ctx.fillStyle = '#fff';
+                    const lines = String(ed.text).split('\n');
+                    let y = h - 26;
+                    for (let i = lines.length - 1; i >= 0; i--) { ctx.fillText(lines[i], w / 2, y); y -= 30; }
+                }
+                canvas.toBlob((b) => {
+                    URL.revokeObjectURL(url);
+                    if (b) { this._pendingMediaWidth = w; this._pendingMediaHeight = h; }
+                    resolve(b ? { blob: b, width: w, height: h } : null);
+                }, 'image/jpeg', 0.82);
+            };
+            img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+            img.src = url;
+        });
     };
 
     proto.closeMediaPreview = function (silent) {
@@ -759,9 +967,16 @@
         if (!pending) return;
         const couple = this.currentCouple;
         if (!couple || couple.status !== 'active') { this.showToast('Chat not active'); return; }
+        let blob = pending.blob;
+        let caption = null;
+        if (pending.kind === 'image') {
+            const edited = await this.applyPendingImageEdits(pending);
+            if (edited) blob = edited.blob;
+            caption = (this._mediaEdit?.text || '').trim() || null;
+        }
         this.setUploadUi(true, pending.kind === 'video' ? 'Uploading video…' : 'Uploading photo…');
         const kind = pending.kind === 'video' ? 'videos' : 'images';
-        const up = await window.LoveHubChat?.uploadCoupleFile(couple.id, kind, pending.blob, {
+        const up = await window.LoveHubChat?.uploadCoupleFile(couple.id, kind, blob, {
             onProgress: (pct) => this.setUploadUi(true, null, pct)
         });
         if (!up?.success) {
@@ -776,6 +991,7 @@
         }
         const res = await window.LoveHubChat?.sendMediaMessage(couple.id, {
             type: pending.kind === 'video' ? 'video' : 'image',
+            content: caption,
             mediaUrl: up.path,
             thumbnailUrl: thumbPath,
             fileSize: pending.size,
@@ -791,6 +1007,7 @@
         this.setUploadUi(false);
         this.closeMediaPreview();
         this._pendingMedia = null;
+        this._mediaEdit = null;
         if (!res?.success) { this.showToast(res?.error || 'Could not send'); return; }
         const msg = this.normalizeMessage(res.message);
         this._chatMessages = [...this._chatMessages, msg];
@@ -1034,11 +1251,29 @@
 
     // ---- stickers ----
 
-    proto.openStickerSheet = function () {
+    proto.openStickerSheet = function (catId) {
         const overlay = document.getElementById('stickerOverlay');
         if (!overlay) return;
-        this.renderStickerSheet('love');
+        this.renderStickerSheet(catId || 'love');
         overlay.classList.add('active');
+    };
+
+    // Built-in animated emoji GIFs — offline-first, CSS-animated, zero assets.
+    proto._gifRegistry = function () {
+        return [
+            { id: 'gif-kiss', emoji: '💋💕', anim: 'heartbeat', label: 'Kiss' },
+            { id: 'gif-hearteyes', emoji: '😍💘', anim: 'pulse', label: 'In love' },
+            { id: 'gif-sparkle', emoji: '✨💖✨', anim: 'spin', label: 'Sparkles' },
+            { id: 'gif-hug', emoji: '🤗💝', anim: 'squish', label: 'Hug' },
+            { id: 'gif-cat', emoji: '😻💞', anim: 'wobble', label: 'Cat love' },
+            { id: 'gif-couple', emoji: '💑', anim: 'float', label: 'Us' },
+            { id: 'gif-kiss2', emoji: '💏', anim: 'pulse', label: 'Sweet kiss' },
+            { id: 'gif-rose', emoji: '🌹💌', anim: 'float', label: 'Rose' },
+            { id: 'gif-night', emoji: '🌙💫', anim: 'float', label: 'Goodnight' },
+            { id: 'gif-cake', emoji: '🎂🎉', anim: 'bounce', label: 'Celebrate' },
+            { id: 'gif-rainbow', emoji: '🌈💕', anim: 'sway', label: 'Rainbow' },
+            { id: 'gif-thanks', emoji: '🥰🙏', anim: 'pulse', label: 'Thank you' }
+        ];
     };
 
     proto.renderStickerSheet = function (catId) {
@@ -1053,12 +1288,30 @@
             b.addEventListener('click', () => this.renderStickerSheet(c.id));
             tabs.appendChild(b);
         });
+        const gifTab = document.createElement('button');
+        gifTab.textContent = '🎞️ GIFs';
+        gifTab.className = catId === 'gif' ? 'active' : '';
+        gifTab.addEventListener('click', () => this.renderStickerSheet('gif'));
+        tabs.appendChild(gifTab);
+
         grid.innerHTML = '';
-        (window.LoveHubStickers || []).filter((s) => s.cat === catId).forEach((s) => {
+        const items = catId === 'gif' ? this._gifRegistry() : (window.LoveHubStickers || []).filter((s) => s.cat === catId);
+        if (!items.length) {
+            const empty = document.createElement('div');
+            empty.className = 'sticker-empty';
+            empty.textContent = catId === 'gif' ? 'No GIFs here yet 💫' : 'No stickers in this pack yet';
+            grid.appendChild(empty);
+            return;
+        }
+        items.forEach((s) => {
             const cell = document.createElement('button');
-            cell.className = 'sticker-cell';
+            cell.className = catId === 'gif' ? 'gif-cell' : 'sticker-cell';
             cell.textContent = s.emoji;
-            cell.addEventListener('click', () => this.sendSticker(s.id));
+            cell.title = s.label;
+            cell.addEventListener('click', () => {
+                if (catId === 'gif') this.sendGif(s.id);
+                else this.sendSticker(s.id);
+            });
             grid.appendChild(cell);
         });
     };
@@ -1082,6 +1335,20 @@
         const closeBtn = document.getElementById('stickerClose');
         if (closeBtn) closeBtn.addEventListener('click', () => overlay?.classList.remove('active'));
         if (overlay) overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
+    };
+
+    proto.sendGif = async function (gifId) {
+        const overlay = document.getElementById('stickerOverlay');
+        overlay?.classList.remove('active');
+        const couple = this.currentCouple;
+        if (!couple || couple.status !== 'active') { this.showToast('Chat not active'); return; }
+        const res = await window.LoveHubChat?.sendMediaMessage(couple.id, {
+            type: 'gif', content: gifId, metadata: { gif: gifId }
+        });
+        if (!res?.success) { this.showToast(res?.error || 'Could not send'); return; }
+        const msg = this.normalizeMessage(res.message);
+        this._chatMessages = [...this._chatMessages, msg];
+        this.appendMessageDom(msg);
     };
 
     // ---- voice messages ----
@@ -1137,6 +1404,7 @@
         }
         if (!this._voice) this._voice = { rec: null, chunks: [], stream: null, blob: null, url: null, duration: 0, playing: false, audio: null, rate: 1, wave: [], timer: null };
         const v = this._voice;
+        if (v.rec) return; // already recording
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const rec = new MediaRecorder(stream);

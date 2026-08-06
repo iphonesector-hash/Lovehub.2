@@ -13,6 +13,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="chat-rich.css">
+    <link rel="stylesheet" href="chat-rich-fixes.css">
 </head>
 <body>
     <div id="toastContainer" class="toast-container"></div>
@@ -117,16 +118,18 @@
                     </div>
                     <div class="chat-composer">
                         <div class="chat-reply-preview" id="chatReplyPreview" style="display:none"></div>
-                        <div class="chat-media-row" id="chatMediaRow">
+                        <div class="chat-media-row" id="chatMediaRow" style="display:none">
                             <button class="media-tool" data-media="image" title="Photo"><svg width="17" height="17" class="icon-svg"><use href="#icon-image"/></svg></button>
                             <button class="media-tool" data-media="camera" title="Camera"><svg width="17" height="17" class="icon-svg"><use href="#icon-camera"/></svg></button>
                             <button class="media-tool" data-media="video" title="Video"><svg width="17" height="17" class="icon-svg"><use href="#icon-video"/></svg></button>
                             <button class="media-tool" data-media="voice" title="Voice message"><svg width="17" height="17" class="icon-svg"><use href="#icon-mic"/></svg></button>
                             <button class="media-tool" data-media="draw" title="Draw / Handwrite"><svg width="17" height="17" class="icon-svg"><use href="#icon-brush"/></svg></button>
                             <button class="media-tool" data-media="sticker" title="Stickers"><svg width="17" height="17" class="icon-svg"><use href="#icon-smile"/></svg></button>
+                            <button class="media-tool media-tool-gif" data-media="gif" title="GIFs">GIF</button>
                         </div>
                         <textarea class="chat-input" id="chatInput" placeholder="Message..." rows="1" maxlength="4000"></textarea>
                         <div class="chat-composer-foot">
+                            <button class="chat-media-toggle" id="chatMediaToggle" title="Add media"><svg width="16" height="16" class="icon-svg"><use href="#icon-plus"/></svg></button>
                             <span class="chat-counter" id="chatCounter"></span>
                             <button class="send-btn" id="sendBtn" disabled><svg width="18" height="18" class="icon-svg"><use href="#icon-send"/></svg></button>
                         </div>

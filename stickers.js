@@ -1,10 +1,17 @@
-// stickers.js — LoveHub animated sticker packs (Phase 3.2).
+// stickers.js — LoveHub animated sticker packs (Phase 3.2, fixed in 3.3).
 // Classic (non-module) global so app.js can use it, mirroring icons.js.
 // Stickers are emoji + CSS animation classes (style.css `@keyframes sticker-*`),
 // so they are resolution-independent and work offline — no binary assets.
 //
 // A sticker message stores `content = sticker id`; the receiver renders the
 // same definition from this registry (realtime-friendly).
+//
+// Phase 3.3 fix: the top-level consts below are *lexical* globals and are NOT
+// properties of `window`. The chat layer reads `window.LoveHubStickers`,
+// `window.LoveHubStickerCategories` and `window.LoveHubStickerById`, which were
+// undefined — that made the sticker picker render empty and sticker bubbles
+// fall back to a generic heart. We now mirror the registry onto window (while
+// keeping the consts for any code that references the bare globals).
 
 const LoveHubStickers = [
     // ❤️ Love
@@ -48,3 +55,12 @@ const LoveHubStickerCategories = [
 
 const LoveHubStickerById = {};
 LoveHubStickers.forEach((s) => { LoveHubStickerById[s.id] = s; });
+
+// ---- window mirror (Phase 3.3 fix) ---------------------------------------
+// The chat layer (chat-rich.js) reads these from `window`; without this the
+// picker was empty and sticker bubbles rendered a fallback emoji.
+if (typeof window !== 'undefined') {
+    window.LoveHubStickers = LoveHubStickers;
+    window.LoveHubStickerCategories = LoveHubStickerCategories;
+    window.LoveHubStickerById = LoveHubStickerById;
+}

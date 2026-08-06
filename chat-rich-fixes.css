@@ -1,0 +1,273 @@
+/* ============================================================================
+   chat-rich-fixes.css — LoveHub Phase 3.3 (rich media fixes + premium chat UX)
+   Loaded AFTER chat-rich.css so these overrides win. Additive only.
+   ============================================================================ */
+
+/* --- Chat scroll / composer fix ---------------------------------------------
+   The composer is position:fixed above the tab bar. chat-rich.css shrank the
+   message list's bottom padding to 20px, so the newest messages scrolled
+   BEHIND the typing area. Restore clearance: the list must reserve room for
+   the tab bar (72px), the composer incl. media row (~130px) and the keyboard
+   inset, so the latest message always rests above the composer. */
+.page[data-page="chat"] .chat-list {
+    padding-bottom: calc(200px + var(--chat-kb, 0px));
+    scroll-padding-bottom: 200px;
+}
+
+/* When the composer collapses to a single row (no media row shown), we still
+   keep comfortable clearance — handled by the rule above. */
+
+/* --- Circular Telegram-style video bubble --------------------------------- */
+.bubble-media.video-round {
+    position: relative;
+    width: 208px;
+    height: 208px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: #000;
+}
+.bubble-media.video-round video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+}
+.bubble-media.video-round .media-dur {
+    position: absolute;
+    bottom: 10px;
+    right: 22px;
+    z-index: 2;
+}
+.video-play-btn {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    color: #fff;
+    background: rgba(20, 16, 48, 0.55);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    transition: transform 0.18s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), background 0.2s;
+    padding: 0 0 2px 4px; /* optical centering for the play glyph */
+}
+.video-play-btn:hover { background: rgba(124, 77, 255, 0.75); }
+.video-play-btn:active { transform: translate(-50%, -50%) scale(0.9); }
+
+/* --- Premium media preview editor ------------------------------------------ */
+.media-edit-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 4px 2px;
+}
+.media-edit-btn {
+    min-width: 34px;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 11px;
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary, #c8c8e0);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.16s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), background 0.18s, color 0.18s;
+}
+.media-edit-btn:active { transform: scale(0.9); }
+.media-edit-btn:hover { background: rgba(124, 77, 255, 0.22); color: #fff; }
+.media-edit-btn.active { background: linear-gradient(135deg, var(--love-accent, #ff5fa2), var(--purple, #7c4dff)); color: #fff; border-color: transparent; }
+.media-edit-brightness {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 8px;
+    border-radius: 11px;
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary, #c8c8e0);
+    font-size: 12px;
+}
+.media-edit-brightness input[type="range"] {
+    width: 74px;
+    accent-color: var(--purple, #7c4dff);
+    height: 18px;
+}
+.media-edit-textbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 6px 2px;
+}
+.media-edit-textbox input {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+    border-radius: 12px;
+    padding: 9px 12px;
+    color: #fff;
+    font-size: 14px;
+    outline: none;
+}
+.media-edit-textbox input::placeholder { color: var(--text-tertiary, #8a8aa8); }
+
+/* Preview stage keeps the image contained while it re-renders */
+.media-preview-stage img { max-width: 100%; max-height: 48dvh; border-radius: 12px; display: block; }
+.media-preview-stage.video-round video { border-radius: 50%; width: 220px; height: 220px; object-fit: cover; }
+
+/* --- Sticker picker hardening ---------------------------------------------- */
+.sticker-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    min-height: 200px;
+    align-content: start;
+}
+.sticker-cell {
+    aspect-ratio: 1;
+    border-radius: 16px;
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+    background: rgba(255, 255, 255, 0.05);
+    font-size: 40px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.16s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), background 0.18s;
+}
+.sticker-cell:hover { background: rgba(124, 77, 255, 0.2); transform: scale(1.06); }
+.sticker-cell:active { transform: scale(0.88); }
+.sticker-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--text-tertiary, #8a8aa8);
+    font-size: 13px;
+    padding: 40px 10px;
+}
+
+/* --- Upload errors ---------------------------------------------------------- */
+.msg-error-note {
+    font-size: 12px;
+    color: #ff9db4;
+    background: rgba(255, 60, 100, 0.12);
+    border-radius: 12px;
+    padding: 10px 12px;
+}
+
+/* --- Premium composer: '+' toggle + GIF tool (Phase 3.3) ------------------- */
+.chat-media-toggle {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary, #c8c8e0);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-right: 2px;
+    transition: transform 0.22s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), background 0.18s, color 0.18s;
+}
+.chat-media-toggle:active { transform: scale(0.85); }
+.chat-media-toggle:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.chat-media-toggle.active {
+    background: linear-gradient(135deg, var(--love-accent, #ff5fa2), var(--purple, #7c4dff));
+    color: #fff;
+    border-color: transparent;
+}
+.chat-media-toggle.active svg { transform: rotate(45deg); }
+.chat-media-toggle svg { transition: transform 0.22s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)); }
+
+/* Media row reveal animation */
+.chat-media-row {
+    animation: mediaRowIn 0.22s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+@keyframes mediaRowIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.media-tool-gif {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    color: #ffd60a;
+}
+
+/* --- Round video bubble block (Telegram video-message style) --------------- */
+.bubble-video-block { max-width: 216px; }
+.bubble-video-block .media-caption { margin-top: 6px; }
+
+/* --- GIF message bubbles (animated emoji, reuses sticker keyframes) -------- */
+.gif-bubble {
+    font-size: 52px;
+    line-height: 1;
+    padding: 10px 14px;
+    background: none;
+    cursor: default;
+    display: inline-block;
+    transform-origin: center;
+}
+.gif-bubble.gif-heartbeat { animation: stickerHeartbeat 1.8s ease-in-out infinite; }
+.gif-bubble.gif-pulse { animation: stickerPulse 1.6s ease-in-out infinite; }
+.gif-bubble.gif-spin { animation: stickerSpin 3.6s linear infinite; }
+.gif-bubble.gif-squish { animation: stickerSquish 1.8s ease-in-out infinite; }
+.gif-bubble.gif-wobble { animation: stickerWobble 2.2s ease-in-out infinite; }
+.gif-bubble.gif-float { animation: stickerFloat 2.8s ease-in-out infinite; }
+.gif-bubble.gif-bounce { animation: stickerBounce 1.5s ease-in-out infinite; }
+.gif-bubble.gif-sway { animation: stickerSway 2.6s ease-in-out infinite; }
+
+/* GIF picker cells inside the sticker sheet */
+.gif-cell {
+    aspect-ratio: 1;
+    border-radius: 16px;
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+    background: rgba(255, 255, 255, 0.05);
+    font-size: 34px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.16s var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)), background 0.18s;
+}
+.gif-cell:hover { background: rgba(255, 159, 10, 0.18); transform: scale(1.06); }
+.gif-cell:active { transform: scale(0.88); }
+
+/* --- Media captions under image/video bubbles ----------------------------- */
+.media-caption {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.92);
+    line-height: 1.4;
+    padding: 8px 10px 6px;
+    background: rgba(0, 0, 0, 0.45);
+}
+.bubble-media .media-caption { position: static; margin: 0; }
+
+/* --- Preview editor polish ------------------------------------------------- */
+.media-preview-stage { position: relative; }
+.media-preview-stage.video-round { position: relative; }
+.media-preview-stage canvas {
+    max-width: 100%;
+    max-height: 48dvh;
+    border-radius: 12px;
+    display: block;
+}
+.media-preview-stage.video-round .video-play-btn { position: absolute; }
