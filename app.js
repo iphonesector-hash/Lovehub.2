@@ -392,8 +392,16 @@ class LoveHub {
                 nextPageEl.style.transform = 'translateY(10px)';
 
                 requestAnimationFrame(() => {
+                    // IMPORTANT: do not leave a transform on the active page.
+                    // Any non-"none" transform makes this page the containing
+                    // block for its fixed descendants, so position:fixed
+                    // elements (the .chat-bar composer) scroll with the page
+                    // instead of the viewport and disappear once message
+                    // history makes the page tall/scrollable. The stylesheet
+                    // rule is .page.active { transform: none } — clearing the
+                    // inline style lets the CSS transition to the final state.
                     nextPageEl.style.opacity = '1';
-                    nextPageEl.style.transform = 'translateY(0)';
+                    nextPageEl.style.transform = '';
                 });
             }, 200);
         } else {
@@ -728,10 +736,12 @@ class LoveHub {
             conversation.appendChild(dateDiv);
 
             byDate[date].forEach((msg) => {
-                conversation.appendChild(this.buildMessageBubble(msg, myUid));
+                const bubble = this.buildBubbleSafely(msg, myUid);
+                if (bubble) conversation.appendChild(bubble);
             });
         });
         conversation.scrollTop = conversation.scrollHeight;
+        this.debugComposer('after renderRealChat (messages in list)');
     }
 
     // One bubble element for a message row (real users).
@@ -891,6 +901,42 @@ class LoveHub {
         update();
     }
 
+    // ---- composer safety + diagnostics ----
+
+    // Diagnostic: confirm the composer shell is still in the DOM at key
+    // moments of the chat lifecycle (before history loads, after fetch,
+    // after render). A missing .chat-bar / #chatInput / #sendBtn here means
+    // some code removed the composer — this log is how that is caught.
+    debugComposer(label) {
+        if (!window.LoveHubChat) return;
+        const bar = document.querySelector('.chat-bar');
+        const input = document.getElementById('chatInput');
+        const send = document.getElementById('sendBtn');
+        console.debug(`[LoveHub:composer] ${label} —`, {
+            chatBarInDom: !!bar,
+            chatInputInDom: !!input,
+            sendBtnInDom: !!send,
+            chatPageInDom: !!document.getElementById('chatPage'),
+            inViewport: !!(input && bar &&
+                (() => {
+                    const r = input.getBoundingClientRect();
+                    return r.width > 0 && r.top >= 0 && r.bottom <= window.innerHeight + 1;
+                })())
+        });
+    }
+
+    // Render one bubble defensively: a single malformed message (bad media
+    // payload, missing fields, unexpected type) must NEVER abort the whole
+    // history render — skip it, log it, and keep the composer intact.
+    buildBubbleSafely(msg, myUid) {
+        try {
+            return this.buildMessageBubble(msg, myUid);
+        } catch (err) {
+            console.error('[LoveHub:chat] skipped unrenderable message', msg && msg.id, err);
+            return null;
+        }
+    }
+
     // ---- load + realtime subscriptions ----
 
     async loadChat(coupleId) {
@@ -928,7 +974,9 @@ class LoveHub {
             this.subscribeChat(coupleId);
             window.LoveHubChat?.markAsRead(coupleId);
         }
+        this.debugComposer('after history fetched, before render');
         this.renderChat();
+        this.debugComposer('after renderChat (history rendered)');
     }
 
     normalizeMessage(m) {
