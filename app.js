@@ -20,6 +20,7 @@ class LoveHub {
         this._chatPartnerLastSeen = null;
         this._chatPartnerName = null;
         this._chatSearch = '';
+        this._chatBookmarksOnly = false; // Phase 5 — bookmarks-only chat view
         this._chatReplyTo = null;
         this._chatSending = false;
         this._chatPrefs = null;
@@ -89,6 +90,8 @@ class LoveHub {
             this.updateAuthUI();
             this.renderAll();
             this.refreshChatUnreadBadge();
+            // Phase 5 — load the couple's shared music library + realtime.
+            window.LoveHubMusicRoom?.onAuthChanged(this.currentCouple);
             if (!hadUser) this.showToast('Welcome back ❤️');
             this.onboardingDismissed = false;
             this.checkOnboarding();
@@ -134,6 +137,10 @@ class LoveHub {
         this.closeChatSheets();
         this.resetChatComposer();
         this.setChatUnreadBadge(0);
+        this._chatBookmarksOnly = false;
+        // Phase 5 — stop music + drop the couple's music library on sign-out.
+        window.LoveHubMusicPlayer?.pause();
+        window.LoveHubMusicRoom?.onSignOut();
         // Never leave a protected page visible after the session ends.
         if (this.currentPage !== 'home') this.navigateTo('home');
         if (!hadState) {
@@ -312,6 +319,8 @@ class LoveHub {
         this._chatNotifPrefs = null;
         this.resetChatComposer();
         this.renderAll();
+        // Phase 5 — rebind the music library to the (possibly new) couple.
+        window.LoveHubMusicRoom?.onAuthChanged(this.currentCouple);
     }
 
     setupSplash() {
@@ -418,6 +427,10 @@ class LoveHub {
         if (pageName === 'chat') {
             this.onChatPageOpened();
         }
+
+        // Phase 5 — Music Room hooks (refresh on open, mini-player on any change).
+        if (pageName === 'music') window.LoveHubMusicRoom?.onPageOpen();
+        window.LoveHubMusicRoom?.onPageChanged(pageName);
 
         // Haptic feedback
         if (navigator.vibrate) navigator.vibrate(8);
@@ -714,12 +727,18 @@ class LoveHub {
 
         // Client-side search over the loaded conversation.
         const query = this._chatSearch.toLowerCase();
-        const list = this._chatSearch
+        let list = this._chatSearch
             ? this._chatMessages.filter((m) => (m.text || '').toLowerCase().includes(query))
             : this._chatMessages;
+        // Phase 5 — bookmarks-only view (messages the couple favorited).
+        if (this._chatBookmarksOnly) list = list.filter((m) => m.favorite);
 
         if (!list.length) {
-            empty(this._chatSearch ? 'No messages match your search.' : 'No messages yet.<br>Say something sweet ❤️');
+            empty(this._chatSearch
+                ? 'No messages match your search.'
+                : this._chatBookmarksOnly
+                    ? 'No bookmarks yet.<br>Tap ⋯ on a message → Favorite ⭐'
+                    : 'No messages yet.<br>Say something sweet ❤️');
             return;
         }
 
@@ -1363,6 +1382,18 @@ class LoveHub {
             });
         }
 
+        // Phase 5 — bookmarks-only view toggle.
+        const bookmarksBtn = document.getElementById('chatBookmarksBtn');
+        if (bookmarksBtn) {
+            bookmarksBtn.addEventListener('click', () => {
+                this._chatBookmarksOnly = !this._chatBookmarksOnly;
+                bookmarksBtn.classList.toggle('active', this._chatBookmarksOnly);
+                if (this._chatBookmarksOnly && this._chatSearch) { this.setChatSearch(''); }
+                this.renderChat();
+                if (this._chatBookmarksOnly) this.showToast('Showing bookmarked messages');
+            });
+        }
+
         // Chat settings sheet.
         if (settingsBtn) settingsBtn.addEventListener('click', () => this.openChatSettings());
 
@@ -1491,7 +1522,7 @@ class LoveHub {
 
         const reactionsRow = document.getElementById('asReactions');
         reactionsRow.innerHTML = '';
-        ['❤️', '😂', '😍', '🥰', '👍'].forEach((emoji) => {
+        ['❤️', '😂', '😍', '👍', '😢', '🔥', '🥰'].forEach((emoji) => {
             const btn = document.createElement('button');
             btn.className = 'react-quick';
             btn.textContent = emoji;
@@ -1532,6 +1563,9 @@ class LoveHub {
         if (target) {
             target[flag] = !target[flag];
             this.refreshMessageDom(target);
+            // Phase 5 - toggling favorite inside the bookmarks view must
+            // drop/keep the row visible without a stale filter.
+            if (flag === 'favorite' && this._chatBookmarksOnly) this.renderChat();
             if (flag === 'saved_to_memories') this.showToast(target[flag] ? 'Saved to Memories ❤️' : 'Removed from Memories');
             else if (flag === 'pinned') this.showToast(target[flag] ? 'Message pinned 📌' : 'Message unpinned');
             else if (flag === 'favorite') this.showToast(target[flag] ? 'Added to favorites ⭐' : 'Removed from favorites');
@@ -1786,6 +1820,28 @@ class LoveHub {
         this.renderChat();
     }
 
+    // Phase 5 - couple statistics (5.14): memories + shared songs cards, appended to the Love page next to Days Together / Messages Sent. All counts are couple-scoped RLS queries; the DOM is guarded against dupes.
+    async refreshLoveExtraStats(container) {
+        if (!container || !this.isRealUser() || !this.currentCouple || this.currentCouple.status !== 'active') return;
+        if (container.querySelector('[data-stat]')) return; // already filled
+        const coupleId = this.currentCouple.id;
+        const [memories, songs] = await Promise.all([
+            window.LoveHubChat ? window.LoveHubChat.getMemoriesCount(coupleId) : Promise.resolve(0),
+            window.LoveHubMusic ? window.LoveHubMusic.getFavorites(coupleId) : Promise.resolve([])
+        ]);
+        const frag = document.createDocumentFragment();
+        const card = (label, value, color) => {
+            const d = document.createElement('div');
+            d.className = 'love-stat-card glass-card';
+            d.dataset.stat = label.toLowerCase().replace(/\s+/g, '-');
+            d.innerHTML = `<div class="stat-icon" style="color: ${color}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg></div><div class="stat-value">${value}</div><div class="stat-label">${label}</div>`;
+            frag.appendChild(d);
+        };
+        card('Memories', memories.toLocaleString(), 'var(--orange)');
+        card('Shared Songs', String(songs.length).toLocaleString(), 'var(--green)');
+        container.appendChild(frag);
+    }
+
     renderLove() {
         const loveStats = document.getElementById('loveStats');
         if (loveStats) {
@@ -1805,6 +1861,7 @@ class LoveHub {
                         <div class="stat-label">Messages Sent</div>
                     </div>
                 `;
+                this.refreshLoveExtraStats(loveStats);
             } else {
                 const days = Math.ceil(Math.abs(new Date() - new Date('2023-01-01')) / (1000 * 60 * 60 * 24));
                 const messages = storage.get('messages') || LoveHubData.messages;
@@ -1993,6 +2050,7 @@ class LoveHub {
             }
 
             if (personalInfoCard) this.renderDbPersonalInfo(personalInfoCard, profile);
+            this.applyProfileTheme(profile.profile_theme);
             this.renderHealth();
         } else if (user) {
             // Legacy demo user — keep the old local experience intact.
@@ -2060,7 +2118,9 @@ class LoveHub {
             { label: 'City', value: profile.city || '' },
             { label: 'Country', value: profile.country || '' },
             { label: 'Occupation', value: profile.occupation || '' },
-            { label: 'Bio', value: profile.bio || '' }
+            { label: 'Bio', value: profile.bio || '' },
+            { label: 'Status', value: profile.status || '' },
+            { label: 'Mood', value: profile.mood || '' }
         ];
         rows.forEach(r => {
             if (r.value) {
@@ -2073,6 +2133,14 @@ class LoveHub {
         if (card.children.length === 0) {
             card.innerHTML = '<div class="info-row"><span class="info-key" style="width:100%;text-align:center;">No information yet. Tap Edit Profile to add.</span></div>';
         }
+    }
+
+    // Phase 5 - profile theme accent (5.13). Persisted as profile_theme;
+    // applying it is a tiny additive CSS override on <html>.
+    applyProfileTheme(theme) {
+        const t = (theme || 'default').trim();
+        const allowed = ['default', 'rose', 'midnight', 'aurora', 'sunset'];
+        document.documentElement.dataset.profileTheme = allowed.includes(t) ? t : 'default';
     }
 
     getProfileSubtitle(profile) {

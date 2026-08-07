@@ -15,7 +15,9 @@ const WRITABLE = [
     'display_name', 'avatar_url', 'bio',
     'date_of_birth', 'height', 'weight', 'gender',
     'city', 'country', 'occupation',
-    'onboarding_completed', 'language', 'status'
+    'onboarding_completed', 'language', 'status',
+    // Phase 5 — profile personalisation (migration 0009)
+    'mood', 'profile_theme'
 ];
 
 export class ProfileService {
@@ -104,7 +106,11 @@ export class ProfileService {
             { key: 'city', label: 'City', type: 'text' },
             { key: 'country', label: 'Country', type: 'text' },
             { key: 'occupation', label: 'Occupation', type: 'text' },
-            { key: 'bio', label: 'Bio', type: 'textarea' }
+            { key: 'bio', label: 'Bio', type: 'textarea' },
+            // Phase 5 — profile personalisation (additive fields)
+            { key: 'status', label: 'Status', type: 'text' },
+            { key: 'mood', label: 'Mood', type: 'select', options: ['❤️ In love', '😊 Happy', '🌙 Calm', '✨ Dreamy', '⚡ Energetic', '🤔 Reflective'] },
+            { key: 'profile_theme', label: 'Profile Theme', type: 'select', options: ['default', 'rose', 'midnight', 'aurora', 'sunset'] }
         ];
     }
 

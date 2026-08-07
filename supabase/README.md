@@ -5,7 +5,7 @@ supabase.com → New Project → wait ~2 min.
 
 ## 2. Run the migrations (source of truth)
 Dashboard → **SQL Editor** → New query → paste the numbered migration files
-in `supabase/migrations/` **in order** (0001 → 0008) and run each one.
+in `supabase/migrations/` **in order** (0001 → 0009) and run each one.
 
 > ⚠️ `supabase/schema.sql` at the repo root is a **stale legacy file** from
 > the games-era and must NOT be used — it contains none of the chat,

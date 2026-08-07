@@ -83,7 +83,14 @@ export const ICONS = {
     undo: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>' },
     redo: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>' },
     image: { viewBox: NS_VIEWBOX, filled: false, body: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline>' },
-    magic: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M12 3v4m0 10v4m9-9h-4M7 12H3m14.5-6.5l-2.8 2.8m-7.4 7.4l-2.8 2.8m12.1 0l-2.8-2.8m-7.4-7.4l-2.8-2.8"></path>' }
+    magic: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M12 3v4m0 10v4m9-9h-4M7 12H3m14.5-6.5l-2.8 2.8m-7.4 7.4l-2.8 2.8m12.1 0l-2.8-2.8m-7.4-7.4l-2.8-2.8"></path>' },
+
+    // ---- Phase 5 — Music Room icons ---------------------------------------
+    skipBack: { viewBox: NS_VIEWBOX, filled: true, body: '<polygon points="19 20 9 12 19 4 19 20"></polygon><rect x="5" y="4" width="2" height="16" rx="0.6"></rect>' },
+    skipForward: { viewBox: NS_VIEWBOX, filled: true, body: '<polygon points="5 4 15 12 5 20 5 4"></polygon><rect x="17" y="4" width="2" height="16" rx="0.6"></rect>' },
+    queue: { viewBox: NS_VIEWBOX, filled: false, body: '<line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="14" y2="12"></line><line x1="4" y1="18" x2="10" y2="18"></line><polyline points="16 9 20 12 16 15"></polyline>' },
+    repeat: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path>' },
+    refresh: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>' }
 };
 
 export const ICON_NAMES = Object.freeze(Object.keys(ICONS));

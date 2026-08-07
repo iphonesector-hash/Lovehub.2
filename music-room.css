@@ -1,0 +1,194 @@
+/* ===========================================================================
+   music-room.css — Phase 5: Music Room + chat bookmarks + profile themes.
+   Additive stylesheet loaded after style.css; reuses the LoveHub design
+   tokens (--love-accent, --luxury-accent, glass surfaces, spring easing).
+   =========================================================================== */
+
+/* ---- Music Room: search bar ---- */
+.music-search {
+    display: flex; align-items: center; gap: 10px;
+    margin: 4px 0 14px; padding: 6px 8px 6px 14px;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    border-radius: 14px; backdrop-filter: blur(20px);
+    color: var(--text-tertiary);
+}
+.music-search:focus-within { border-color: var(--glass-border-strong); color: var(--love-accent); }
+.music-search input {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+    color: var(--text-primary); font-size: 14px; padding: 8px 0;
+    -webkit-user-select: text; user-select: text;
+}
+.music-search input::placeholder { color: var(--text-tertiary); }
+.music-search-go {
+    border: none; border-radius: 10px; padding: 8px 14px;
+    background: linear-gradient(135deg, var(--love-accent), var(--luxury-accent));
+    color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: transform 0.15s, opacity 0.2s; flex-shrink: 0;
+}
+.music-search-go:active { transform: scale(0.95); }
+
+/* ---- Music Room: tabs ---- */
+.music-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+.music-tab {
+    flex: 1; border: 1px solid var(--glass-border); background: var(--glass-bg);
+    color: var(--text-secondary); border-radius: 12px; padding: 9px 0;
+    font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.25s;
+    backdrop-filter: blur(16px);
+}
+.music-tab.active {
+    background: linear-gradient(135deg, rgba(255, 63, 95, 0.18), rgba(191, 90, 242, 0.18));
+    border-color: rgba(255, 63, 95, 0.45); color: var(--text-primary);
+}
+
+/* ---- Music Room: states (loading / empty / error / retry) ---- */
+.music-state { min-height: 44px; padding: 10px 4px; }
+.music-state-line {
+    color: var(--text-secondary); font-size: 13px; line-height: 1.7;
+    text-align: center; padding: 26px 20px;
+}
+.music-retry {
+    display: block; margin: 0 auto; border: none; border-radius: 100px;
+    padding: 9px 22px; background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.music-retry:active { transform: scale(0.96); }
+
+/* ---- Music Room: result rows ---- */
+.music-result {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; margin-bottom: 10px;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    border-radius: 14px; backdrop-filter: blur(20px);
+    transition: transform 0.2s, border-color 0.2s;
+}
+.music-result:active { transform: scale(0.985); }
+.music-result-art {
+    width: 42px; height: 42px; border-radius: 11px; flex-shrink: 0;
+    background: linear-gradient(135deg, rgba(255, 63, 95, 0.35), rgba(94, 92, 230, 0.35));
+    background-size: cover; background-position: center;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.music-result-info { flex: 1; min-width: 0; }
+.music-result-title {
+    font-size: 13.5px; font-weight: 600; color: var(--text-primary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.music-result-meta {
+    font-size: 11.5px; color: var(--text-secondary); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.music-result-play, .music-result-add, .music-result-fav, .music-result-remove {
+    width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+    border: 1px solid var(--glass-border); background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary); font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: all 0.2s;
+}
+.music-result-play { background: linear-gradient(135deg, var(--love-accent), var(--luxury-accent)); border: none; color: #fff; }
+.music-result-play.disabled { background: rgba(255, 255, 255, 0.06); color: var(--text-tertiary); }
+.music-result-play:active, .music-result-add:active, .music-result-fav:active { transform: scale(0.9); }
+.music-result-add svg, .music-result-fav svg { width: 14px; height: 14px; }
+
+/* ---- Music Room: now-playing card ---- */
+.music-now-card {
+    padding: 16px; margin-bottom: 14px; border-radius: 18px;
+    background: linear-gradient(160deg, rgba(255, 63, 95, 0.14), rgba(94, 92, 230, 0.16)), var(--glass-strong);
+    border: 1px solid var(--glass-border-strong); backdrop-filter: blur(26px);
+    animation: slideUp 0.35s var(--spring-bounce);
+}
+.music-now-head { display: flex; align-items: center; gap: 12px; }
+.music-now-art {
+    width: 52px; height: 52px; border-radius: 13px; flex-shrink: 0;
+    background: linear-gradient(135deg, rgba(255, 63, 95, 0.4), rgba(191, 90, 242, 0.4));
+    background-size: cover; background-position: center;
+    box-shadow: 0 6px 18px rgba(255, 55, 95, 0.35);
+}
+.music-now-info { flex: 1; min-width: 0; }
+.music-now-title { font-size: 15px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-now-artist { font-size: 12px; color: var(--text-secondary); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-now-controls { display: flex; align-items: center; justify-content: center; gap: 22px; margin: 14px 0 8px; }
+.music-ctl {
+    width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.07); color: var(--text-primary); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: transform 0.15s;
+}
+.music-ctl svg { width: 16px; height: 16px; }
+.music-ctl:active { transform: scale(0.9); }
+.music-ctl-main {
+    width: 54px; height: 54px;
+    background: linear-gradient(135deg, var(--love-accent), var(--luxury-accent));
+    border: none; box-shadow: 0 8px 22px rgba(255, 55, 95, 0.4);
+}
+.music-ctl-main svg { width: 20px; height: 20px; }
+.music-now-progress input[type='range'] { width: 100%; accent-color: var(--love-accent); }
+.music-now-times { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
+.music-now-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; gap: 10px; }
+.music-now-volume { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.music-now-volume svg { width: 15px; height: 15px; color: var(--text-secondary); flex-shrink: 0; }
+.music-now-volume input[type='range'] { flex: 1; min-width: 0; accent-color: var(--luxury-accent); }
+.music-now-actions { display: flex; gap: 8px; }
+.music-now-fav, .music-now-share, .music-now-retry {
+    width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.07); color: var(--text-primary); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: transform 0.15s;
+}
+.music-now-fav svg, .music-now-share svg, .music-now-retry svg { width: 15px; height: 15px; }
+.music-now-fav:active, .music-now-share:active, .music-now-retry:active { transform: scale(0.9); }
+.music-now-error {
+    margin-top: 10px; padding: 9px 12px; border-radius: 10px;
+    background: rgba(255, 69, 58, 0.14); border: 1px solid rgba(255, 69, 58, 0.35);
+    color: #FF453A; font-size: 12px; text-align: center;
+}
+
+/* ---- Music Room: queue sheet ---- */
+.music-queue-overlay {
+    position: fixed; inset: 0; z-index: 900; background: rgba(0, 0, 0, 0.55);
+    display: none; align-items: flex-end; justify-content: center;
+    backdrop-filter: blur(6px);
+}
+.music-queue-overlay.active { display: flex; }
+.music-queue-sheet {
+    width: 100%; max-width: 420px; max-height: 72vh; overflow-y: auto;
+    background: var(--bg-secondary); border: 1px solid var(--glass-border-strong);
+    border-bottom: none; border-radius: 22px 22px 0 0;
+    padding: 16px 16px calc(16px + var(--safe-b, 0px));
+    animation: slideUp 0.3s var(--spring-bounce);
+}
+.music-queue-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.music-queue-title { font-size: 16px; font-weight: 700; }
+.music-queue-clear {
+    border: none; background: none; color: var(--love-accent); font-size: 13px;
+    font-weight: 600; cursor: pointer; padding: 6px 8px;
+}
+.music-queue-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    border-radius: 12px; background: var(--glass-bg); border: 1px solid var(--glass-border);
+    margin-bottom: 8px; cursor: pointer; transition: border-color 0.2s;
+}
+.music-queue-row.current { border-color: rgba(255, 63, 95, 0.5); }
+.music-queue-info { flex: 1; min-width: 0; }
+.music-queue-meta { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-queue-btns { display: flex; gap: 6px; flex-shrink: 0; }
+.music-queue-ctl {
+    width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.06); color: var(--text-secondary);
+    font-size: 12px; cursor: pointer;
+}
+.music-queue-ctl.danger { color: #FF453A; }
+.music-queue-done {
+    width: 100%; margin-top: 12px; border: none; border-radius: 12px; padding: 13px 0;
+    background: linear-gradient(135deg, var(--love-accent), var(--luxury-accent));
+    color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+
+/* ---- Chat bookmarks toggle (Phase 5.12) ---- */
+.icon-btn.active {
+    color: var(--love-accent);
+    border-color: rgba(255, 63, 95, 0.5);
+    background: rgba(255, 63, 95, 0.14);
+}
+
+/* ---- Profile theme accents (Phase 5.13) ---- */
+html[data-profile-theme='rose'] { --love-accent: #FF5A8A; }
+html[data-profile-theme='midnight'] { --love-accent: #5E9CFF; --luxury-accent: #8E7BFF; }
+html[data-profile-theme='aurora'] { --love-accent: #4CE0B3; --luxury-accent: #5E9CFF; }
+html[data-profile-theme='sunset'] { --love-accent: #FF9F0A; --luxury-accent: #FF375F; }

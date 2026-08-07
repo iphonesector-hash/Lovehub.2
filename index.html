@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="chat-rich.css">
     <link rel="stylesheet" href="chat-rich-fixes.css">
+    <link rel="stylesheet" href="music-room.css">
 </head>
 <body>
     <div id="toastContainer" class="toast-container"></div>
@@ -99,6 +100,7 @@
                     </div>
                     <div class="chat-head-actions">
                         <button class="glass icon-btn" id="chatSearchBtn" title="Search messages"><svg width="18" height="18" class="icon-svg"><use href="#icon-search"/></svg></button>
+                        <button class="glass icon-btn" id="chatBookmarksBtn" title="Bookmarked messages"><svg width="18" height="18" class="icon-svg"><use href="#icon-bookmark"/></svg></button>
                         <button class="glass icon-btn" id="chatSettingsBtn" title="Chat settings"><svg width="18" height="18" class="icon-svg"><use href="#icon-settings"/></svg></button>
                     </div>
                 </div>
@@ -169,6 +171,38 @@
             <section class="page" data-page="timeline">
                 <div class="page-title">Timeline</div>
                 <div id="timelineList" style="position:relative;padding-left:22px"></div>
+            </section>
+
+            <!-- MUSIC ROOM PAGE (Phase 5) -->
+            <section class="page" data-page="music">
+                <div class="top-bar">
+                    <div class="page-title" style="margin:0">Music Room</div>
+                    <button class="glass icon-btn" id="musicQueueBtn" title="Queue">
+                        <svg width="18" height="18" class="icon-svg"><use href="#icon-queue"/></svg>
+                    </button>
+                </div>
+
+                <div class="music-search">
+                    <svg width="16" height="16" class="icon-svg"><use href="#icon-search"/></svg>
+                    <input type="text" id="musicSearchInput" placeholder="Search songs, artists…" autocomplete="off">
+                    <button class="music-search-go" id="musicSearchBtn">Search</button>
+                </div>
+
+                <div class="music-tabs">
+                    <button class="music-tab active" data-mtab="search">Search</button>
+                    <button class="music-tab" data-mtab="favorites">Favorites</button>
+                    <button class="music-tab" data-mtab="shared">Shared</button>
+                </div>
+
+                <div class="music-body">
+                    <div class="music-now-card" id="musicNowCard" style="display:none"></div>
+                    <div class="music-section" id="musicSearchView">
+                        <div class="music-state" id="musicSearchState"></div>
+                        <div id="musicResults"></div>
+                    </div>
+                    <div class="music-section" id="musicFavView" style="display:none"></div>
+                    <div class="music-section" id="musicSharedView" style="display:none"></div>
+                </div>
             </section>
 
             <!-- PROFILE PAGE -->
@@ -506,6 +540,18 @@
             <div class="viewer-stage" id="viewerStage"></div>
         </div>
 
+        <!-- Music queue sheet (Phase 5) -->
+        <div class="music-queue-overlay" id="musicQueueSheet">
+            <div class="music-queue-sheet">
+                <div class="music-queue-head">
+                    <div class="music-queue-title">Up Next</div>
+                    <button class="music-queue-clear" id="musicQueueClear">Clear</button>
+                </div>
+                <div class="music-queue-list" id="musicQueueList"></div>
+                <button class="music-queue-done" id="musicQueueDone">Done</button>
+            </div>
+        </div>
+
         <!-- Floating hearts effect layer -->
         <div class="chat-effects" id="chatEffects"></div>
 
@@ -515,6 +561,7 @@
             <button class="tab" data-tab="chat"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-message"/></svg><span class="tab-badge" id="chatUnreadBadge" hidden></span></div><span class="tab-label">Chat</span></button>
             <button class="tab" data-tab="love"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-heart"/></svg></div><span class="tab-label">Love</span></button>
             <button class="tab" data-tab="games"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-gamepad"/></svg></div><span class="tab-label">Games</span></button>
+            <button class="tab" data-tab="music"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-music"/></svg></div><span class="tab-label">Music</span></button>
             <button class="tab" data-tab="profile"><div class="tab-icon"><svg class="icon-svg"><use href="#icon-person"/></svg></div><span class="tab-label">Profile</span></button>
         </nav>
     </div>
@@ -533,6 +580,10 @@
     <script src="app.js"></script>
     <!-- Phase 3.2 feature patch: rich media, sounds, music room, AI assistant -->
     <script src="chat-rich.js"></script>
+    <!-- Phase 5 — Music Room: search providers, player engine, UI -->
+    <script src="music-search.js"></script>
+    <script src="music-player.js"></script>
+    <script src="music-room.js"></script>
     <!-- ES module boot (Phase 0): installs the SVG icon sprite so all <use href="#icon-..."> render -->
     <script type="module" src="src/main.js"></script>
 </body>

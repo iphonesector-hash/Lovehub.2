@@ -81,6 +81,20 @@ export class ChatService {
         return count || 0;
     }
 
+    // Phase 5 — number of messages the couple saved to Memories. RLS keeps
+    // the count scoped to confirmed couple members.
+    async getMemoriesCount(coupleId) {
+        if (!this.isReady() || !coupleId) return 0;
+        const { count, error } = await supabaseClient
+            .from('messages')
+            .select('id', { count: 'exact', head: true })
+            .eq('couple_id', coupleId)
+            .eq('saved_to_memories', true)
+            .is('deleted_at', null);
+        if (error) return 0;
+        return count || 0;
+    }
+
     // ---------------- message mutations (RPCs) ----------------
 
     async sendMessage(coupleId, content, { replyToId = null } = {}) {
