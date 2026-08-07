@@ -57,10 +57,15 @@ vm.createContext(sandbox);
 
 vm.runInContext(fs.readFileSync('music-player.js', 'utf8'), sandbox);
 vm.runInContext(fs.readFileSync('music-search.js', 'utf8'), sandbox);
+// music-room.js guards its DOM construction (no document in this sandbox),
+// so the pure utilities on window.LoveHubMusicRoomUtils load safely.
+vm.runInContext(fs.readFileSync('music-room.js', 'utf8'), sandbox);
 
 const Player = sandbox.window.MusicPlayerService;
 const MusicSearch = sandbox.window.MusicSearch;
 const sanitize = sandbox.window.MusicSearch.sanitizeQuery;
+const normalizeQ = sandbox.window.MusicSearch.normalizeQuery;
+const U = sandbox.window.LoveHubMusicRoomUtils;
 
 let failures = 0;
 let passes = 0;
@@ -283,6 +288,141 @@ async function main() {
         sandbox.fetch = () => Promise.reject(new Error('network down'));
         const empty = await MusicSearch.search('anything');
         assert(empty.length === 0, 'fetch failure → empty result, no throw');
+    });
+
+    // ===========================================================================
+    console.log('\n== MusicPlayerService: shuffle & repeat (Phase 5 Premium) ==');
+
+    await test('setShuffle builds a deterministic play order anchored at current', async () => {
+        const p = new Player();
+        p.setQueue([T1, T2, T3], 0);
+        p.setShuffle(true, () => 0);
+        assert(p.shuffle === true, 'shuffle flag on');
+        // rng()=>0 gives order [anchor=0, 2, 1]
+        assert(p._order.join(',') === '0,2,1', 'play order keeps current first, shuffles rest');
+        p.setShuffle(false);
+        assert(p._order.join(',') === '0,1,2', 'shuffle off → identity order');
+        p.destroy();
+    });
+
+    await test('next() follows the shuffled order', async () => {
+        const p = new Player();
+        p.setQueue([T1, T2, T3], 0);
+        p.setShuffle(true, () => 0);
+        await p.next();
+        assert(p.index === 2, 'next went to order position 1 (index 2)');
+        p.destroy();
+    });
+
+    await test('cycleRepeat walks off → all → one → off', async () => {
+        const p = new Player();
+        assert(p.cycleRepeat() === 'all', 'off → all');
+        assert(p.cycleRepeat() === 'one', 'all → one');
+        assert(p.cycleRepeat() === 'off', 'one → off');
+        p.destroy();
+    });
+
+    await test('repeat one: ended re-plays the same track', async () => {
+        const p = new Player();
+        p.setQueue([T1, T2], 0);
+        p.setRepeat('one');
+        await p.playIndex(0);
+        const before = p._audio._playCount;
+        p._audio._fire('ended');
+        assert(p.index === 0, 'stays on the same track');
+        assert(p.snapshot().playing === true, 'still playing');
+        assert(p._audio._playCount > before, 'audio re-played');
+        p.destroy();
+    });
+
+    await test('repeat all: ended wraps to the start of the order', async () => {
+        const p = new Player();
+        p.setQueue([T1, T2], 0);
+        p.setRepeat('all');
+        await p.playIndex(1);
+        p._audio._fire('ended');
+        assert(p.index === 0, 'wrapped to order head');
+        p.destroy();
+    });
+
+    await test('repeat off: end of queue emits the end event and stops', async () => {
+        const p = new Player();
+        let ended = 0;
+        p.on('end', () => { ended++; });
+        p.setQueue([T1, T2], 0);
+        await p.playIndex(1);
+        p._audio._fire('ended');
+        assert(ended === 1, 'end event emitted');
+        assert(p.snapshot().playing === false, 'stopped at end');
+        p.destroy();
+    });
+
+    await test('getAudioElement exposes the single audio + crossOrigin for analyser', async () => {
+        const p = new Player();
+        const a = p.getAudioElement();
+        assert(a === p._audio, 'exposes the live audio element');
+        assert(a.crossOrigin === 'anonymous', 'crossOrigin set for CORS-clean analysis');
+        p.destroy();
+    });
+
+    // ===========================================================================
+    console.log('\n== music-search: normalizeQuery (Phase 5 Premium) ==');
+
+    await test('normalizeQuery folds Persian/Arabic alternate spellings + diacritics', async () => {
+        assert(normalizeQ('Yellow') === 'yellow', 'lowercases');
+        assert(normalizeQ('Café') === 'cafe', 'strips diacritics');
+        assert(normalizeQ('دیوار') === 'دیوار', 'keeps Persian text');
+        assert(normalizeQ('يوسف') === 'یوسف', 'ي → ی');
+        assert(normalizeQ('كامل') === 'کامل', 'ك → ک');
+        assert(normalizeQ('أحمد إبراهيم آدم') === 'احمد ابراهیم ادم', 'أ/إ/آ → ا + ي → ی');
+        assert(normalizeQ('  Hello،  world! ') === 'hello world', 'punctuation → space, trimmed');
+        assert(normalizeQ('x'.repeat(300)).length === 120, 'capped at 120');
+    });
+
+    // ===========================================================================
+    console.log('\n== MusicRoom utils (Phase 5 Premium) ==');
+
+    await test('pushRecent dedupes by key, newest first, capped', async () => {
+        let list = U.pushRecent([], T1, 20);
+        list = U.pushRecent(list, T1, 20);
+        assert(list.length === 1, 'duplicate collapsed');
+        list = U.pushRecent(list, T2, 2);
+        list = U.pushRecent(list, T3, 2);
+        assert(list.length === 2, 'capped at 2');
+        assert(list[0].dedupeKey === 'id3', 'newest first');
+        assert(list[0].playedAt > 0, 'playedAt stamped');
+    });
+
+    await test('upsertContinue updates the resume point in place', async () => {
+        let list = U.upsertContinue([], T1, 30, 6);
+        assert(list.length === 1 && list[0].resumeAt === 30, 'first entry');
+        list = U.upsertContinue(list, T1, 75, 6);
+        assert(list.length === 1 && list[0].resumeAt === 75, 'resume point updated in place');
+        list = U.upsertContinue(list, T2, 10, 1);
+        assert(list.length === 1 && list[0].dedupeKey === 'id2', 'limit applied');
+    });
+
+    await test('samplePalette returns dominant colors, skipping near-black/white', async () => {
+        const px = new Uint8ClampedArray(48 * 48 * 4);
+        for (let i = 0; i < px.length; i += 4) {
+            px[i] = i % 8 === 0 ? 255 : 0;      // mostly red
+            px[i + 1] = i % 3 === 0 ? 255 : 0;  // some green
+            px[i + 2] = i % 13 === 0 ? 255 : 0; // some blue
+            px[i + 3] = 255;
+        }
+        const pal = U.samplePalette(px, 48, 48, 3);
+        assert(pal.length === 3, 'returns requested count');
+        assert(pal[0][0] > pal[0][1] && pal[0][0] > pal[0][2], 'red dominates');
+        const dark = new Uint8ClampedArray(48 * 48 * 4);
+        dark.fill(0);
+        const fallback = U.samplePalette(dark, 48, 48, 3);
+        assert(fallback.length === 3, 'near-black input falls back gracefully');
+    });
+
+    await test('fmtTime / fmtRemaining formatting', async () => {
+        assert(U.fmtTime(125) === '2:05', 'fmtTime m:ss');
+        assert(U.fmtRemaining(185) === '−3:05', 'fmtRemaining minus-prefixed');
+        assert(U.fmtRemaining(0) === '0:00', 'fmtRemaining zero');
     });
 
     // ===========================================================================

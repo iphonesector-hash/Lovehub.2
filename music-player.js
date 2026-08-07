@@ -1,11 +1,12 @@
 // ===========================================================================
-// music-player.js — Phase 5.4: reusable MusicPlayerService engine.
+// music-player.js — the single LoveHub playback engine (MusicPlayerService).
 //
 // Wraps the browser's native <audio> element (no downloading, no permanent
 // copies — the stream is played from the source URL). Responsibilities:
 //   play / pause / toggle / seek / setVolume / loadTrack / next / previous,
-//   queue management (add, remove, reorder, clear), current-track state and
-//   playback events (state / track / progress / error).
+//   queue management (add, remove, reorder, clear), shuffle, repeat modes,
+//   sleep-timer-friendly 'end' event, current-track state and playback events
+//   (state / track / progress / error).
 //
 // Handles autoplay restrictions (keeps the track loaded, surfaces a paused
 // state), unsupported MIME types (MediaError surfaced as a retryable error),
@@ -13,7 +14,21 @@
 // and unavailable/expired streams. Never loops retries.
 //
 // Events: 'state' (full snapshot), 'track' (a new track loaded),
-//         'progress' (timeupdate snapshot), 'error' ({message, code, retryable}).
+//         'progress' (timeupdate snapshot), 'error' ({message, code, retryable}),
+//         'end' (a track finished and playback stopped / wrapped).
+//
+// Phase 5 Premium additions (all additive, nothing removed):
+//   * shuffle mode   — a shuffled play-order that keeps the current track in
+//                      place and re-shuffles the rest (deterministic when a
+//                      custom rng is supplied — used by tests).
+//   * repeat modes   — 'off' | 'all' | 'one' (cycleRepeat() walks the cycle).
+//   * 'end' event    — fired when the current track reaches the end.
+//   * getAudioElement() — exposes the one <audio> so the visualizer can
+//                      attach a single MediaElementSource (never duplicated).
+//   * crossOrigin    — 'anonymous' on the element so archive.org streams can
+//                      feed the analyser (the source serves CORS headers).
+//   * fixed the previously-dead silent retry (was testing `a.current`, which
+//     never exists on HTMLAudioElement; now uses currentSrc || src).
 // ===========================================================================
 
 (function () {
@@ -35,6 +50,18 @@
         }
     }
 
+    // Fisher–Yates over [0..n); deterministic when rng() is supplied.
+    function shuffledIndices(n, rng) {
+        const arr = [];
+        for (let i = 0; i < n; i++) arr.push(i);
+        const rand = typeof rng === 'function' ? rng : Math.random;
+        for (let i = n - 1; i > 0; i--) {
+            const j = Math.floor(rand() * (i + 1));
+            const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+        }
+        return arr;
+    }
+
     class MusicPlayerService extends Emitter {
         constructor() {
             super();
@@ -45,6 +72,9 @@
             this.loading = false;
             this.error = null;
             this.volume = 0.8;
+            this.shuffle = false;
+            this.repeat = 'off'; // 'off' | 'all' | 'one'
+            this._order = [];    // play-order of queue indices
             this._retried = 0;
             this._audio = null;
             this._bound = {};
@@ -58,6 +88,9 @@
             const a = new Audio();
             a.preload = 'auto';
             a.volume = this.volume;
+            // crossOrigin lets the visualizer read real frequency data from
+            // CORS-open sources (archive.org) via a MediaElementSource.
+            a.crossOrigin = 'anonymous';
             const b = this._bound;
             b.timeupdate = () => this.emit('progress', this.snapshot());
             b.ended = () => this._onEnded();
@@ -85,6 +118,10 @@
             this._audio = null;
         }
 
+        getAudioElement() {
+            return this._audio;
+        }
+
         // ---- state ----
 
         snapshot() {
@@ -96,6 +133,8 @@
                 playing: !!(this.playing && this.current),
                 loading: this.loading,
                 error: this.error,
+                shuffle: this.shuffle,
+                repeat: this.repeat,
                 duration: (a && isFinite(a.duration) && a.duration > 0) ? a.duration : (this.current && this.current.duration) || 0,
                 time: (a && isFinite(a.currentTime)) ? a.currentTime : 0,
                 volume: this.volume
@@ -181,18 +220,67 @@
             this.emit('state', this.snapshot());
         }
 
+        // ---- shuffle / repeat (Phase 5 Premium, additive) ----
+
+        setShuffle(on, rng) {
+            this.shuffle = !!on;
+            if (this.shuffle) this._rebuildOrder(rng);
+            else this._order = this.queue.map((_, i) => i);
+            this.emit('state', this.snapshot());
+        }
+
+        toggleShuffle() {
+            this.setShuffle(!this.shuffle);
+            return this.shuffle;
+        }
+
+        setRepeat(mode) {
+            this.repeat = ['off', 'all', 'one'].indexOf(mode) > -1 ? mode : 'off';
+            this.emit('state', this.snapshot());
+        }
+
+        // off → all → one → off
+        cycleRepeat() {
+            const cycle = { off: 'all', all: 'one', one: 'off' };
+            this.setRepeat(cycle[this.repeat] || 'off');
+            return this.repeat;
+        }
+
+        // Play-order management. With shuffle OFF the order is identity.
+        // With shuffle ON we keep the current/anchored track first and
+        // shuffle the rest — so "next" never re-plays the current song.
+        _rebuildOrder(rng) {
+            const n = this.queue.length;
+            if (!this.shuffle || n < 2) {
+                this._order = this.queue.map((_, i) => i);
+                return;
+            }
+            const anchor = this.index > -1 && this.index < n ? this.index : (n ? 0 : -1);
+            const rest = [];
+            for (let i = 0; i < n; i++) if (i !== anchor) rest.push(i);
+            const perm = shuffledIndices(rest.length, rng);
+            this._order = [anchor].concat(perm.map((k) => rest[k]));
+        }
+
+        _orderPos(idx) {
+            const pos = this._order.indexOf(idx);
+            return pos > -1 ? pos : this._order.length - 1; // unknown → treat as last
+        }
+
         // ---- queue ----
 
         setQueue(tracks, startIndex) {
             this.queue = (tracks || []).filter((t) => t && t.playableUrl);
             this.index = Math.max(0, startIndex || 0);
             if (this.queue.length && this.index >= this.queue.length) this.index = 0;
+            this._rebuildOrder();
             this.emit('state', this.snapshot());
         }
 
         addToQueue(track) {
             if (!track || !track.playableUrl) return false;
             this.queue.push(track);
+            this._rebuildOrder();
             this.emit('state', this.snapshot());
             return true;
         }
@@ -202,6 +290,7 @@
             this.queue.splice(idx, 1);
             if (this.index === idx) this.index = -1;
             else if (this.index > idx) this.index -= 1;
+            this._rebuildOrder();
             this.emit('state', this.snapshot());
         }
 
@@ -212,35 +301,57 @@
             if (this.index === from) this.index = to;
             else if (this.index > from && this.index <= to) this.index -= 1;
             else if (this.index < from && this.index >= to) this.index += 1;
+            this._rebuildOrder();
             this.emit('state', this.snapshot());
         }
 
         clearQueue() {
             this.queue = [];
             this.index = -1;
+            this._order = [];
             this.emit('state', this.snapshot());
         }
 
         async playIndex(idx) {
             if (idx < 0 || idx >= this.queue.length) return;
             this.index = idx;
+            this._rebuildOrder();
             await this.loadTrack(this.queue[idx], { autoplay: true, fromUser: true });
         }
 
         async next() {
             if (!this.queue.length) return;
-            const n = this.index + 1;
-            if (n >= this.queue.length) { this.pause(); this.seek(0); return; }
-            await this.playIndex(n);
+            const pos = this._orderPos(this.index);
+            const n = pos + 1;
+            if (n < this._order.length) {
+                await this.playIndex(this._order[n]);
+                return;
+            }
+            // Reached the end of the play order.
+            if (this.repeat === 'all') {
+                await this.playIndex(this._order[0]);
+                return;
+            }
+            this.pause();
+            this.seek(0);
         }
 
         async previous() {
             if (!this.queue.length) return;
             const a = this._audio;
             if (a && a.currentTime > 3) { this.seek(0); return; }
-            const n = this.index - 1;
-            if (n < 0) { this.pause(); this.seek(0); return; }
-            await this.playIndex(n);
+            const pos = this._orderPos(this.index);
+            const n = pos - 1;
+            if (n >= 0) {
+                await this.playIndex(this._order[n]);
+                return;
+            }
+            if (this.repeat === 'all') {
+                await this.playIndex(this._order[this._order.length - 1]);
+                return;
+            }
+            this.pause();
+            this.seek(0);
         }
 
         retry() {
@@ -251,11 +362,21 @@
         // ---- internal handlers ----
 
         _onEnded() {
-            const n = this.index + 1;
-            if (n < this.queue.length) {
-                this.playIndex(n);
+            if (this.repeat === 'one' && this.current) {
+                // Replay the same track from the top (Repeat One).
+                try { this.seek(0); this.play(); } catch (e) { /* ignore */ }
+                this.emit('end', this.snapshot());
+                return;
+            }
+            const pos = this._orderPos(this.index);
+            const n = pos + 1;
+            if (n < this._order.length) {
+                this.playIndex(this._order[n]);
+            } else if (this.repeat === 'all') {
+                this.playIndex(this._order[0]);
             } else {
                 this.playing = false;
+                this.emit('end', this.snapshot());
                 this.emit('state', this.snapshot());
             }
         }
@@ -265,7 +386,7 @@
             const code = (a && a.error && a.error.code) || null;
             // One silent retry for transient network blips; a second failure
             // becomes a user-facing retryable error (never an infinite loop).
-            if (this._retried < 1 && a && a.current && this.current) {
+            if (this._retried < 1 && a && this.current) {
                 this._retried += 1;
                 const src = a.currentSrc || a.src;
                 try {
@@ -285,10 +406,14 @@
             this._teardownAudio();
             this.queue = [];
             this.index = -1;
+            this._order = [];
             this.current = null;
             this.playing = false;
         }
     }
+
+    // Exposed for tests / advanced consumers.
+    MusicPlayerService._shuffledIndices = shuffledIndices;
 
     window.MusicPlayerService = MusicPlayerService;
     window.LoveHubMusicPlayer = new MusicPlayerService();

@@ -35,6 +35,29 @@
             .slice(0, 120);
     }
 
+    // Phase 5 Premium — normalize a query for forgiving search: lowercase,
+    // strip diacritics/combining marks, fold common Persian/Arabic alternate
+    // spellings (ي→ی, ك→ک, ة→ه, أ/إ/آ→ا, ى→ی) so "yellow", "Yellow" and
+    // Persian variants all resolve. Never executed or rendered — query text
+    // is only ever passed to a URL parameter.
+    function normalizeQuery(q) {
+        return String(q == null ? '' : q)
+            .toLowerCase()
+            // Fold precomposed Persian/Arabic variants BEFORE decomposition, so
+            // أ/إ/آ become plain ا instead of alef + a combining hamza.
+            .replace(/[يى]/g, 'ی')
+            .replace(/ك/g, 'ک')
+            .replace(/ة/g, 'ه')
+            .replace(/[أإآ]/g, 'ا')
+            .normalize('NFKD')
+            // Strip Latin combining marks + Arabic diacritics (harakat/tanwin).
+            .replace(/[\u0300-\u036f\u064b-\u0652\u0670]/g, '')
+            .replace(/[.,،!؟?;:'"()\[\]{}]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 120);
+    }
+
     function fetchJson(url, timeoutMs) {
         const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
         const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs || DEFAULT_TIMEOUT_MS) : null;
@@ -68,8 +91,9 @@
         async search(query) {
             const q = sanitizeQuery(query);
             if (!q) return [];
+            const nq = normalizeQuery(query);
             const searchUrl = 'https://archive.org/advancedsearch.php?q=' +
-                encodeURIComponent(q + ' AND mediatype:(audio)') +
+                encodeURIComponent((nq || q) + ' AND mediatype:(audio)') +
                 '&fl[]=identifier&fl[]=title&fl[]=creator&rows=24&page=1&output=json';
 
             const json = await fetchJson(searchUrl);
@@ -181,6 +205,7 @@
 
     window.MusicSearch = new MusicSearchRegistry();
     window.MusicSearch.sanitizeQuery = sanitizeQuery;
+    window.MusicSearch.normalizeQuery = normalizeQuery;
     window.MusicSearch.InternetArchiveProvider = InternetArchiveProvider;
     window.MusicSearch.MusicSearchProvider = MusicSearchProvider;
 })();

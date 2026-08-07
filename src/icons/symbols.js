@@ -90,6 +90,11 @@ export const ICONS = {
     skipForward: { viewBox: NS_VIEWBOX, filled: true, body: '<polygon points="5 4 15 12 5 20 5 4"></polygon><rect x="17" y="4" width="2" height="16" rx="0.6"></rect>' },
     queue: { viewBox: NS_VIEWBOX, filled: false, body: '<line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="14" y2="12"></line><line x1="4" y1="18" x2="10" y2="18"></line><polyline points="16 9 20 12 16 15"></polyline>' },
     repeat: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path>' },
+    shuffle: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line>' },
+    timer: { viewBox: NS_VIEWBOX, filled: false, body: '<circle cx="12" cy="13" r="8"></circle><path d="M12 9v4l2.5 2.5"></path><path d="M9 2h6"></path>' },
+    eq: { viewBox: NS_VIEWBOX, filled: false, body: '<line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line>' },
+    lyrics: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M4 5h16v2H4z"></path><path d="M4 11h10v2H4z"></path><path d="M4 17h7v2H4z"></path><circle cx="18" cy="17" r="2.6"></circle><path d="M20.6 17v-4.5l2 .8"></path>' },
+    dots: { viewBox: NS_VIEWBOX, filled: true, body: '<circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle>' },
     refresh: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>' }
 };
 
