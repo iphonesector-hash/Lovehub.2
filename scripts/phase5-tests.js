@@ -1183,6 +1183,157 @@ async function main() {
         p.destroy();
     });
 
+    // ---------------------------------------------------------------------------
+    console.log('\n== Phase 9: Vercel CORS relay (api/rjavan) ==');
+
+    const rjavanRelayBase = sandbox.window.MusicSearch.rjavanRelayBase;
+
+    await test('relay: base is absolute outside the Vercel host, same-origin on it', async () => {
+        assert(typeof rjavanRelayBase === 'function', 'rjavanRelayBase exported');
+        const noHost = rjavanRelayBase();
+        assert(noHost === 'https://lovehub-gamma.vercel.app/api/rjavan', 'absolute relay base outside Vercel host: ' + noHost);
+        // Same-origin when served from the Vercel production host.
+        const saved = sandbox.window.location;
+        sandbox.window.location = { host: 'lovehub-gamma.vercel.app' };
+        try {
+            assert(rjavanRelayBase() === '/api/rjavan', 'same-origin relay on Vercel host');
+        } finally {
+            sandbox.window.location = saved;
+        }
+    });
+
+    await test('relay: provider searchTracks calls the relay with ?query= (ابی)', async () => {
+        const realFetch = sandbox.fetch;
+        let seenUrl = null;
+        sandbox.fetch = (url, init) => {
+            const u = String(url);
+            if (u.indexOf('api/rjavan') !== -1 || u.indexOf('lovehub-gamma.vercel.app/api/rjavan') !== -1) {
+                seenUrl = u;
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ mp3s: [rjSample] }) });
+            }
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+        try {
+            const p = new CodeBazanRjavanProvider();
+            const tracks = await p.searchTracks('\u0627\u0628\u06cc'); // ابی
+            assert(tracks.length === 1 && tracks[0].playable === true, 'ابی via relay → playable track');
+            assert(seenUrl && seenUrl.indexOf('?query=') !== -1, 'relay URL has query param: ' + seenUrl);
+            assert(seenUrl && seenUrl.indexOf('api.codebazan.ir') === -1, 'provider no longer calls codebazan.ir directly');
+            assert(seenUrl && decodeURIComponent(seenUrl.split('query=')[1]) === '\u0627\u0628\u06cc', 'Persian query preserved in relay URL');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('relay: getTrack(id) calls the relay with ?id=', async () => {
+        const realFetch = sandbox.fetch;
+        let seenUrl = null;
+        sandbox.fetch = (url) => {
+            const u = String(url);
+            if (u.indexOf('api/rjavan') !== -1 || u.indexOf('lovehub-gamma.vercel.app/api/rjavan') !== -1) {
+                seenUrl = u;
+                return Promise.resolve({ ok: true, json: () => Promise.resolve(u.indexOf('id=') !== -1 ? rjSample : { mp3s: [] }) });
+            }
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+        try {
+            const p = new CodeBazanRjavanProvider();
+            const t = await p.getTrack('52642');
+            assert(t && t.id === '52642' && t.artist === 'Ebi', 'track resolved via relay ?id=');
+            assert(seenUrl && seenUrl.indexOf('?id=52642') !== -1, 'relay URL has id param: ' + seenUrl);
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('relay: relay HTTP 500 fails the provider but IA fallback survives (isolation)', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = (url, init) => {
+            const u = String(url);
+            if (u.indexOf('api/rjavan') !== -1 || u.indexOf('lovehub-gamma.vercel.app/api/rjavan') !== -1) {
+                return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'upstream HTTP 500' }) });
+            }
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            if (u.indexOf('advancedsearch') !== -1) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ response: { docs: [{ identifier: 'ia-ebi', title: 'Ebi: Delbar', creator: 'Ebi' }] } }) });
+            }
+            if (u.indexOf('/metadata/') !== -1) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ metadata: { creator: 'Ebi' }, files: [{ name: 'd.mp3', format: 'VBR MP3', size: 4000, length: '200' }] }) });
+            }
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+        try {
+            const M = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000 });
+            M.registerProvider(new CodeBazanRjavanProvider());
+            M.registerProvider(fakeProvider('internet-archive', 'IA', { items: [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://ia/d.mp3' }] }));
+            const ctx = buildCtx('ebi');
+            const variants = buildSearchVariants('ebi').slice(0, 3);
+            const out = await M.searchOthers('ebi', ctx, variants, 'nope');
+            assert(Array.isArray(out) && out.some((t) => (t.provider || '') === 'internet-archive' || (t.sources || []).some((x) => x.provider === 'internet-archive')), 'IA result present after relay 500');
+            const diag = M.diagnostics().find((d) => d.id === 'codebazan-rjavan');
+            assert(diag && diag.failures >= 1, 'relay failure recorded for codebazan-rjavan');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('relay: relay timeout does not block IA (bounded, isolated)', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = (url, init) => {
+            const u = String(url);
+            if (u.indexOf('api/rjavan') !== -1 || u.indexOf('lovehub-gamma.vercel.app/api/rjavan') !== -1) {
+                return new Promise((resolve, reject) => { setTimeout(() => reject(new Error('AbortError: relay timeout')), 5); });
+            }
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            if (u.indexOf('advancedsearch') !== -1) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ response: { docs: [{ identifier: 'ia-ebi2', title: 'Ebi: Delbar', creator: 'Ebi' }] } }) });
+            }
+            if (u.indexOf('/metadata/') !== -1) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ metadata: { creator: 'Ebi' }, files: [{ name: 'd.mp3', format: 'VBR MP3', size: 4000, length: '200' }] }) });
+            }
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+        try {
+            const M = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000, timeoutMs: { 'codebazan-rjavan': 10 } });
+            M.registerProvider(new CodeBazanRjavanProvider());
+            M.registerProvider(fakeProvider('internet-archive', 'IA', { items: [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://ia/d.mp3' }] }));
+            const ctx = buildCtx('ebi');
+            const variants = buildSearchVariants('ebi').slice(0, 3);
+            const out = await M.searchOthers('ebi', ctx, variants, 'nope');
+            assert(out.some((t) => (t.provider || '') === 'internet-archive' || (t.sources || []).some((x) => x.provider === 'internet-archive')), 'IA survived relay timeout');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('relay: malformed upstream JSON through relay is a provider failure, not a crash', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = (url) => {
+            const u = String(url);
+            if (u.indexOf('api/rjavan') !== -1 || u.indexOf('lovehub-gamma.vercel.app/api/rjavan') !== -1) {
+                return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON')) });
+            }
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+        try {
+            const p = new CodeBazanRjavanProvider();
+            let threw = false;
+            try { await p.searchTracks('ebi'); } catch (e) { threw = true; }
+            assert(threw === true, 'malformed relay JSON → provider throws (manager isolates)');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('relay: audio URLs in relay responses stay provider-direct (no proxying)', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = (url) => {
+            const u = String(url);
+            if (u.indexOf('api/rjavan') !== -1 || u.indexOf('lovehub-gamma.vercel.app/api/rjavan') !== -1) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ mp3s: [rjSample] }) });
+            }
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+        try {
+            const p = new CodeBazanRjavanProvider();
+            const tracks = await p.searchTracks('ebi');
+            const t = tracks[0];
+            assert(t.audioUrl === rjSample.link && String(t.audioUrl).indexOf('host1.media-rj.com/') !== -1, 'audioUrl stays provider-direct (media-rj.com)');
+            assert(String(t.audioUrl).indexOf('lovehub-gamma.vercel.app') === -1, 'relay never hosts/proxies the audio');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+
     console.log('\nResults:', passes, 'passed,', failures, 'failed');
     process.exit(failures ? 1 : 0);
 }

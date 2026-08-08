@@ -842,6 +842,21 @@
     }
 
     // -----------------------------------------------------------------------
+    // Vercel CORS relay for the Radio Javan search API (api/rjavan.js). The
+    // upstream API sends no Access-Control-Allow-Origin, so browsers cannot
+    // read it directly; the relay forwards ?query=/?id= only and returns the
+    // JSON unchanged with allowlisted CORS. Audio URLs in the response stay
+    // provider-direct (never proxied/cached by the relay).
+    function rjavanRelayBase() {
+        const host = (typeof window !== 'undefined' && window.location && window.location.host) || '';
+        // Same-origin relay when served from the Vercel production host.
+        if (/lovehub-gamma\.vercel\.app$/i.test(host)) return '/api/rjavan';
+        // Absolute relay URL from any other origin (GitHub Pages, previews,
+        // Node tests); the relay allowlists the LoveHub frontend origins.
+        return 'https://lovehub-gamma.vercel.app/api/rjavan';
+    }
+
+    // -----------------------------------------------------------------------
     // CodeBazan → Radio Javan — keyless, CORS-open search that returns direct
     // MP3 links (host*.media-rj.com). Live-verified (Aug 2026): 22/22 queries
     // HTTP 200, ~600ms latency, direct-browser-audio compatible at HTTP level
@@ -866,7 +881,7 @@
             const q = sanitizeQuery(query);
             if (!q) return [];
             const json = await fetchJson(
-                'https://api.codebazan.ir/music/rjavan/?query=' + encodeURIComponent(q),
+                this._relayUrl('query', q),
                 this.timeoutMs
             );
             const mp3s = (json && Array.isArray(json.mp3s)) ? json.mp3s : [];
@@ -876,11 +891,16 @@
         async getTrack(id) {
             if (id == null) return null;
             const json = await fetchJson(
-                'https://api.codebazan.ir/music/rjavan/?id=' + encodeURIComponent(String(id)),
+                this._relayUrl('id', String(id)),
                 this.timeoutMs
             );
             if (!json || json.id == null) return null;
             return this._toTrack(json);
+        }
+
+        // Build the relay URL for a given kind ('query' | 'id') and value.
+        _relayUrl(kind, value) {
+            return rjavanRelayBase() + '?' + kind + '=' + encodeURIComponent(String(value));
         }
 
         // Map one Radio Javan mp3 entry into the unified LoveHub track shape.
@@ -1461,5 +1481,6 @@
     window.MusicSearch.MelodifyProvider = MelodifyProvider;
     window.MusicSearch.CodeBazanProvider = CodeBazanProvider;
     window.MusicSearch.CodeBazanRjavanProvider = CodeBazanRjavanProvider;
+    window.MusicSearch.rjavanRelayBase = rjavanRelayBase;
     window.MusicSearch.DirectAudioProvider = DirectAudioProvider;
 })();
