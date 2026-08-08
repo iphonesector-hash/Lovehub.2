@@ -23,6 +23,12 @@ rm -rf dist
 mkdir -p dist
 cp -r index.html style.css chat-rich.css chat-rich-fixes.css music-room.css app.js chat-rich.js music-room.js music-player.js music-search.js music-visualizer.js data.js utils.js icons.js stickers.js assets services supabase src sw.js dist
 
+# Phase 1 — include playable games (Snake 3D and future titles)
+if [ -d games ]; then
+  cp -r games dist/
+  echo "build: copied games/ into dist/"
+fi
+
 if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
   printf 'const SUPABASE_CONFIG = { url: "%s", anonKey: "%s" };\n' \
     "$SUPABASE_URL" "$SUPABASE_ANON_KEY" > dist/supabase/config.js
