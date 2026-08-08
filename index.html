@@ -3,11 +3,67 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+    <link rel="icon" type="image/png" href="assets/images/lovehub-icon.png">
+    <link rel="apple-touch-icon" href="assets/images/lovehub-icon.png">
     <title>LoveHub — by SECTOR</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="chat-rich.css">
+    <link rel="stylesheet" href="chat-rich-fixes.css">
+    <link rel="stylesheet" href="music-room.css">
 </head>
 <body>
-<p>Restoring full index... please wait — if you see this, restore failed.</p>
-<script src="app.js"></script>
-<script src="games-launcher.js"></script>
+    <!-- EMERGENCY: full index being restored. If you still see this, open GitHub Actions or run:
+         git checkout e9748886d6df42188000d88851c7176abfb2138b -- index.html
+         then add: <script src="games-launcher.js"></script> after app.js
+    -->
+    <div id="toastContainer" class="toast-container"></div>
+    <div id="splash"><div class="splash-logo"><div class="sector-text">SECTOR</div></div></div>
+    <div id="app" class="theme-night">
+        <div class="pages-container">
+            <section class="page active" data-page="home">
+                <div class="home-header"><div class="brand-mark"><span class="brand-name">LoveHub</span></div><div class="greeting" id="greeting">Good evening</div></div>
+                <div class="relationship-counter"><div class="counter-number" id="daysCounter">0</div><div class="counter-label">Days Together</div></div>
+                <p style="padding:24px;color:#aaa;text-align:center">Restoring full UI… Please pull the latest index from commit e9748886 or re-upload index.html.</p>
+            </section>
+            <section class="page" data-page="games">
+                <div class="page-header"><h1>Games</h1></div>
+                <div id="gamesGrid" class="games-grid"></div>
+            </section>
+            <section class="page" data-page="chat"><div id="chatConversation"></div></section>
+            <section class="page" data-page="love"></section>
+            <section class="page" data-page="music"></section>
+            <section class="page" data-page="profile"></section>
+        </div>
+        <nav class="tab-bar">
+            <button class="tab active" data-tab="home"><span class="tab-label">Home</span></button>
+            <button class="tab" data-tab="chat"><span class="tab-label">Chat</span></button>
+            <button class="tab" data-tab="love"><span class="tab-label">Love</span></button>
+            <button class="tab" data-tab="games"><span class="tab-label">Games</span></button>
+            <button class="tab" data-tab="music"><span class="tab-label">Music</span></button>
+            <button class="tab" data-tab="profile"><span class="tab-label">Profile</span></button>
+        </nav>
+    </div>
+    <script src="icons.js"></script>
+    <script src="stickers.js"></script>
+    <script src="assets/vendor/supabase-js/umd/supabase.js"></script>
+    <script src="supabase/config.js"></script>
+    <script src="services/StorageService.js"></script>
+    <script src="services/AuthService.js"></script>
+    <script src="services/UserService.js"></script>
+    <script src="services/HealthService.js"></script>
+    <script src="data.js"></script>
+    <script src="utils.js"></script>
+    <script src="app.js"></script>
+    <script src="games-launcher.js"></script>
+    <script src="chat-rich.js"></script>
+    <script src="music-search.js"></script>
+    <script src="music-player.js"></script>
+    <script src="music-visualizer.js"></script>
+    <script src="music-room.js"></script>
+    <script type="module" src="src/main.js"></script>
 </body>
 </html>
