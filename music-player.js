@@ -101,8 +101,14 @@
             b.onerror = () => this._onPlaybackError();
             b.onseeking = () => { this.loading = true; this.emit('state', this.snapshot()); };
             b.onseeked = () => { this.loading = false; this.emit('state', this.snapshot()); };
+            // Handlers are stored under their DOM-ish names (b.onplay, b.onerror,
+            // ...) while timeupdate/ended live directly on b. Resolve the actual
+            // handler so listeners are really registered (previously b['play'] /
+            // b['error'] etc. were undefined, silently breaking error fallback
+            // and canplay/loading state in the browser).
             ['timeupdate', 'ended', 'play', 'pause', 'canplay', 'waiting', 'error', 'seeking', 'seeked'].forEach((ev) => {
-                a.addEventListener(ev, b[ev]);
+                const fn = b[ev] || b['on' + ev];
+                if (fn) a.addEventListener(ev, fn);
             });
             this._audio = a;
         }
@@ -112,7 +118,8 @@
             if (!a) return;
             try { a.pause(); a.removeAttribute('src'); a.load(); } catch (e) { /* ignore */ }
             ['timeupdate', 'ended', 'play', 'pause', 'canplay', 'waiting', 'error', 'seeking', 'seeked'].forEach((ev) => {
-                a.removeEventListener(ev, this._bound[ev]);
+                const fn = this._bound[ev] || this._bound['on' + ev];
+                if (fn) a.removeEventListener(ev, fn);
             });
             this._bound = {};
             this._audio = null;

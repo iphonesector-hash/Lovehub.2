@@ -964,9 +964,12 @@
             row.appendChild(art);
 
             const info = el('div', 'music-result-info');
-            info.appendChild(el('div', 'music-result-title', track.title || 'Untitled'));
+            const titleEl = el('div', 'music-result-title', track.title || 'Untitled');
+            titleEl.dir = 'auto'; // Persian titles render RTL, Latin LTR
+            info.appendChild(titleEl);
             const meta = [track.artist, track.source].filter(Boolean).join(' · ');
             const metaLine = el('div', 'music-result-meta', meta || 'Unknown artist');
+            metaLine.dir = 'auto';
             if (track.duration) metaLine.textContent += ' · ' + fmtTime(track.duration);
             info.appendChild(metaLine);
             if (o.addedBy) info.appendChild(o.addedBy);
@@ -1304,8 +1307,8 @@
                 if (t.artworkUrl) this._els.npArt.style.backgroundImage = 'url("' + esc(t.artworkUrl) + '")';
                 else this._els.npArt.style.backgroundImage = '';
             }
-            if (this._els.npTitle) this._els.npTitle.textContent = t.title || 'Untitled';
-            if (this._els.npArtist) this._els.npArtist.textContent = t.artist || 'Unknown artist';
+            if (this._els.npTitle) { this._els.npTitle.textContent = t.title || 'Untitled'; this._els.npTitle.dir = 'auto'; }
+            if (this._els.npArtist) { this._els.npArtist.textContent = t.artist || 'Unknown artist'; this._els.npArtist.dir = 'auto'; }
             if (this._els.npProvider) {
                 this._els.npProvider.textContent = (t.source || t.provider || '').toUpperCase();
                 this._els.npProvider.style.display = (t.source || t.provider) ? '' : 'none';

@@ -815,12 +815,12 @@ async function main() {
         assert(seen.length > 0 && !seen.some((s) => s === 'ابی') && /^[a-z]/i.test(seen[0]), 'latin variant used: ' + seen.join(','));
     });
 
-    await test('registry: all six providers registered with priority config', () => {
+    await test('registry: all seven providers registered with priority config', () => {
         const M = sandbox.window.MusicSearch;
         const ids = M.manager.providers.map((p) => p.id).sort();
-        assert(ids.join(',') === 'ahangify,codebazan,direct-audio,internet-archive,melobit,melodify', 'registered: ' + ids.join(','));
-        assert(M.manager.config.priority['internet-archive'] === 100 && M.manager.config.priority.melobit === 90, 'priority config present');
-        assert(M.manager.isEnabled('melobit') && !M.manager.isEnabled('direct-audio'), 'enable flags default');
+        assert(ids.join(',') === 'ahangify,codebazan,codebazan-rjavan,direct-audio,internet-archive,melobit,melodify', 'registered: ' + ids.join(','));
+        assert(M.manager.config.priority['codebazan-rjavan'] === 110 && M.manager.config.priority['internet-archive'] === 100 && M.manager.config.priority.melobit === 90, 'priority config present');
+        assert(M.manager.isEnabled('codebazan-rjavan') && M.manager.isEnabled('melobit') && !M.manager.isEnabled('direct-audio'), 'enable flags default');
     });
 
     await test('searchSmart: all providers failing → graceful unavailable state', async () => {
@@ -916,6 +916,271 @@ async function main() {
             ia.resolveTrack = realResolve;
             sandbox.fetch = realFetch;
         }
+    });
+
+    // ---------------------------------------------------------------------------
+    console.log('\n== music-search: CodeBazan → Radio Javan provider (Phase 7) ==');
+
+    const CodeBazanRjavanProvider = sandbox.window.MusicSearch.CodeBazanRjavanProvider;
+    assert(typeof CodeBazanRjavanProvider === 'function', 'rjavan provider class exported');
+
+    const rjSample = {
+        id: 52642,
+        title: 'Ebi - "Hamin Khoobe (Ft Shadmehr Aghili)"',
+        artist: 'Ebi',
+        song: 'Hamin Khoobe (Ft Shadmehr Aghili)',
+        duration: 300.121,
+        photo: 'https://assets.rjassets.com/static/mp3/x/65b035226b6171c.jpg',
+        thumbnail: 'https://assets.rjassets.com/static/mp3/x/65b035226b6171c-thumb.jpg',
+        link: 'https://host1.media-rj.com/media/mp3/mp3-256/52642-becdc8d090175a7.mp3',
+        hls_link: 'https://host1.media-rj.com/media/hls/52642.m3u8',
+        lq_link: 'https://host1.media-rj.com/media/mp3/mp3-128/52642.mp3',
+        hq_link: 'https://host1.media-rj.com/media/mp3/mp3-320/52642.mp3',
+        artist_farsi: 'ابی',
+        song_farsi: 'همین خوبه شادمهر عقیلی',
+        plays: '38,602,084',
+        likes: '31,927'
+    };
+
+    function mockRjFetch(handler) {
+        return (url, init) => {
+            const u = String(url);
+            if (u.indexOf('rjavan') !== -1) return handler(u, init);
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+    }
+
+    await test('rjavan: searchTracks normalizes real response into LoveHub shape', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = mockRjFetch(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ mp3s: [rjSample] }) }));
+        try {
+            const p = new CodeBazanRjavanProvider();
+            const tracks = await p.searchTracks('ebi');
+            assert(tracks.length === 1, 'one track returned');
+            const t = tracks[0];
+            assert(t.provider === 'codebazan-rjavan' && t.providerId === 'codebazan-rjavan' && t.source === 'Radio Javan', 'provider ids');
+            assert(t.title === 'Hamin Khoobe (Ft Shadmehr Aghili)', 'clean song title, got: ' + t.title);
+            assert(t.artist === 'Ebi', 'artist');
+            assert(t.duration === 300.121, 'duration');
+            assert(t.coverUrl === rjSample.photo && t.artworkUrl === rjSample.photo, 'cover');
+            assert(t.audioUrl === rjSample.link && t.playableUrl === rjSample.link, 'direct mp3 as audioUrl');
+            assert(t.playable === true && t.sourceType === 'direct-audio', 'playable + sourceType');
+            assert(t.downloadable === false, 'not advertised as downloadable');
+            assert(t.metadata.artist_farsi === 'ابی' && t.metadata.song_farsi === 'همین خوبه شادمهر عقیلی', 'farsi metadata kept');
+            assert(t.metadata.rjId === '52642' && /hls/.test(t.metadata.hls_link) && t.metadata.hq_link, 'extra metadata kept');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('rjavan: getTrack(id) resolves via ?id= endpoint', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = mockRjFetch((u) => Promise.resolve({ ok: true, json: () => Promise.resolve(u.indexOf('id=') !== -1 ? rjSample : { mp3s: [] }) }));
+        try {
+            const p = new CodeBazanRjavanProvider();
+            const t = await p.getTrack('52642');
+            assert(t && t.id === '52642' && t.artist === 'Ebi' && t.playable === true, 'track resolved by id');
+            const none = await p.getTrack(null);
+            assert(none === null, 'null id → null');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('rjavan: search works for required Persian/Latin queries (mocked)', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = mockRjFetch(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ mp3s: [rjSample] }) }));
+        try {
+            const p = new CodeBazanRjavanProvider();
+            const queries = ['ابی', 'Ebi', 'گوگوش', 'محسن چاوشی', 'mohsen chavoshi', 'ستاره های سربی'];
+            for (const q of queries) {
+                const tracks = await p.searchTracks(q);
+                assert(tracks.length >= 1 && tracks[0].playable, q + ' → playable result');
+            }
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('rjavan: Adele query does not rank Adel Esmaeilpour as an exact artist match', () => {
+        const ctx = buildCtx('Adele');
+        const adel = {
+            title: 'Miras', artist: 'Adel Esmaeilpour',
+            playableUrl: 'https://host2.media-rj.com/media/mp3/mp3-256/80427-93b10cbf568036f.mp3',
+            audioEvidence: true
+        };
+        const s = scoreT(adel, ctx);
+        assert(s.score < sandbox.window.MusicSearch.RELEVANCE_MIN, 'Adel Esmaeilpour below relevance threshold (' + s.score + ')');
+        const out = rankF([adel, { title: 'Hello', artist: 'Adele', playableUrl: 'https://x/hello.mp3', audioEvidence: true }], ctx);
+        assert(out.results.length === 1 && out.results[0].artist === 'Adele', 'only exact Adele match survives');
+    });
+
+    await test('rjavan: cross-provider dedupe — RJ + IA same song → one result, 2 sources, RJ primary', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = mockRjFetch(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ mp3s: [Object.assign({}, rjSample, { song: 'Delbar', title: 'Ebi - "Delbar"', link: 'https://host1.media-rj.com/media/mp3/mp3-256/999-delbar.mp3' })] }) }));
+        try {
+            const m = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000, timeoutMs: { 'codebazan-rjavan': 800 } });
+            m.registerProvider(new CodeBazanRjavanProvider());
+            m.registerProvider(fakeProvider('internet-archive', 'IA', { items: [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://ia/delbar.mp3' }] }));
+            const ctx = buildCtx('delbar');
+            const out = await m.searchOthers('delbar', ctx, buildSearchVariants('delbar'), 'nope');
+            assert(out.length === 1, 'deduped to one result, got ' + out.length);
+            assert(out[0].sources.length === 2, 'two sources kept');
+            assert(out[0].playableUrl === 'https://host1.media-rj.com/media/mp3/mp3-256/999-delbar.mp3', 'RJ primary (priority 110)');
+            const next = nextPlayableSource(out[0], out[0].playableUrl);
+            assert(next === 'https://ia/delbar.mp3', 'playback fallback → IA source');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('rjavan: failure isolation — RJ timeout/500/malformed never breaks IA', async () => {
+        const realFetch = sandbox.fetch;
+        try {
+            const modes = ['timeout', '500', 'malformed'];
+            for (const mode of modes) {
+                sandbox.fetch = (url, init) => {
+                    const u = String(url);
+                    if (u.indexOf('rjavan') !== -1) {
+                        if (mode === 'timeout') return new Promise((res, rej) => setTimeout(() => rej(new Error('network timeout')), 40));
+                        if (mode === '500') return Promise.resolve({ ok: false, status: 500 });
+                        return Promise.resolve({ ok: true, json: () => Promise.resolve({ unexpected: true }) });
+                    }
+                    if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+                    return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+                };
+                const m = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000, timeoutMs: { 'codebazan-rjavan': 60 } });
+                m.registerProvider(new CodeBazanRjavanProvider());
+                m.registerProvider(fakeProvider('internet-archive', 'IA', { items: [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://ia/d.mp3' }] }));
+                const out = await m.searchOthers('delbar', buildCtx('delbar'), buildSearchVariants('delbar'), 'nope');
+                assert(out.length >= 1 && out[0].playableUrl === 'https://ia/d.mp3', 'IA result survived rjavan ' + mode);
+                if (mode !== 'malformed') {
+                    const d = m.diagnostics().find((x) => x.id === 'codebazan-rjavan');
+                    assert(d && d.failures >= 1, 'rjavan failure recorded for ' + mode);
+                }
+            }
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('rjavan: Persian query matches Farsi artist metadata (شادمهر case)', () => {
+        // rjavan returns Latin artist + Farsi artist_farsi; the transliteration
+        // 'shadmhr' does not match 'Shadmehr', so the Farsi field must provide
+        // the artist evidence.
+        const ctx = buildCtx('شادمهر');
+        const t = {
+            title: 'Mamnoon', artist: 'Shadmehr Aghili',
+            artist_farsi: 'شادمهر عقیلی', song_farsi: 'ممنون',
+            playableUrl: 'https://host2.media-rj.com/media/mp3/mp3-256/152298-x.mp3',
+            audioEvidence: true
+        };
+        const s = scoreT(t, ctx);
+        assert(s.score >= sandbox.window.MusicSearch.RELEVANCE_MIN, 'Farsi artist match is relevant (' + s.score + ')');
+        const out = rankF([t], ctx);
+        assert(out.results.length === 1 && out.state === 'ok', 'survives ranking');
+    });
+
+    await test('merge: higher-priority rjavan source becomes primary even when IA arrives first', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = mockRjFetch(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ mp3s: [Object.assign({}, rjSample, { song: 'Delbar', title: 'Ebi - "Delbar"', link: 'https://host1.media-rj.com/media/mp3/mp3-256/999-delbar.mp3' })] }) }));
+        try {
+            const m = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000, timeoutMs: { 'codebazan-rjavan': 800 } });
+            m.registerProvider(new CodeBazanRjavanProvider());
+            m.registerProvider(fakeProvider('internet-archive', 'IA', { items: [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://ia/delbar.mp3' }] }));
+            const ctx = buildCtx('delbar');
+            const out = await m.searchOthers('delbar', ctx, buildSearchVariants('delbar'), 'nope');
+            assert(out.length === 1 && out[0].sources.length === 2, 'merged result with both sources');
+            assert(out[0].playableUrl === 'https://host1.media-rj.com/media/mp3/mp3-256/999-delbar.mp3', 'rjavan primary by priority');
+            assert(out[0].artist_farsi === 'ابی' && out[0].song_farsi === 'همین خوبه شادمهر عقیلی', 'Farsi metadata folded into primary');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    // ---------------------------------------------------------------------------
+    console.log('\n== Phase 8 QA: unified normalization + player transport ==');
+
+    await test('IA resolveTrack emits the unified LoveHub track shape', async () => {
+        const IA = sandbox.window.MusicSearch.InternetArchiveProvider;
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = (url) => {
+            const u = String(url);
+            if (u.indexOf('advancedsearch') !== -1) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ response: { docs: [] } }) });
+            }
+            if (u.indexOf('/metadata/') !== -1) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                    metadata: { creator: 'Ebi' },
+                    files: [{ name: 'delbar.mp3', format: 'VBR MP3', size: 4000, length: '200.5' }]
+                }) });
+            }
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 60)));
+        };
+        try {
+            const p = new IA();
+            const t = await p.resolveTrack({ identifier: 'ebi-delbar', title: 'Ebi: Delbar', creator: 'Ebi' });
+            assert(t && t.provider === 'internet-archive' && t.providerId === 'internet-archive', 'provider ids');
+            assert(t.playable === true && t.downloadable === true, 'unified playable/downloadable flags');
+            assert(t.audioUrl === t.playableUrl && /delbar\.mp3$/.test(t.playableUrl), 'audioUrl + legacy playableUrl');
+            assert(t.coverUrl === t.artworkUrl && /services\/img/.test(t.coverUrl), 'coverUrl + legacy artworkUrl');
+            assert(t.sourceType === 'archive-stream' && t.metadata && t.metadata.label === 'Internet Archive', 'sourceType + metadata');
+            assert(t.duration === 200.5 && t.streamUrl === t.audioUrl, 'duration + streamUrl');
+            assert(t.title === 'Delbar' && t.artist === 'Ebi', 'title cleaned of Artist: prefix, artist kept');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('player: resume continues from the same position', async () => {
+        const p = new Player();
+        await p.loadTrack(T1);
+        p.pause();
+        p._audio.currentTime = 42;
+        await p.play();
+        const s = p.snapshot();
+        assert(s.playing === true, 'resumed playing');
+        assert(s.time === 42, 'position preserved (' + s.time + ')');
+        p.destroy();
+    });
+
+    await test('player: ended advances to the next track', async () => {
+        const p = new Player();
+        p.setQueue([T1, T2], 0);
+        await p.loadTrack(T1);
+        p._audio._fire('ended');
+        assert(p.index === 1, 'index advanced to 1');
+        assert(p.current && p.current.dedupeKey === 'id2', 'next track loaded');
+        p.destroy();
+    });
+
+    await test('player: ended at queue end (repeat off) stops cleanly + emits end', async () => {
+        const p = new Player();
+        let endCount = 0;
+        p.on('end', () => { endCount++; });
+        p.setQueue([T1], 0);
+        await p.loadTrack(T1);
+        p._audio._fire('ended');
+        assert(endCount === 1, 'end event emitted');
+        assert(p.snapshot().playing === false, 'stopped (not playing)');
+        p.destroy();
+    });
+
+    await test('player: repeat one replays the same track from the top', async () => {
+        const p = new Player();
+        p.setRepeat('one');
+        await p.loadTrack(T1);
+        p.seek(30);
+        const before = p._audio._playCount;
+        p._audio._fire('ended');
+        assert(p.current && p.current.dedupeKey === 'id1', 'same track kept');
+        assert(p._audio.currentTime === 0, 'seeked back to 0');
+        assert(p._audio._playCount >= before + 1, 'replayed');
+        p.destroy();
+    });
+
+    await test('player: playback error — one silent retry, then user-facing error (no loop)', async () => {
+        const p = new Player();
+        let errEvt = null;
+        p.on('error', (e) => { errEvt = e; });
+        await p.loadTrack(T1);
+        p._audio.error = { code: 4 };
+        p._audio._fire('error');
+        assert(p._retried === 1, 'one silent retry attempted');
+        assert(p._audio._playCount >= 1, 'retry re-issued play');
+        p._audio._fire('error');
+        assert(p._retried === 1, 'no second silent retry (cap reached)');
+        assert(p.error === 'Stream unavailable', 'user-facing error state');
+        assert(p.snapshot().playing === false, 'stopped');
+        assert(errEvt && errEvt.retryable === true, 'retryable error event emitted');
+        p.destroy();
     });
 
     console.log('\nResults:', passes, 'passed,', failures, 'failed');

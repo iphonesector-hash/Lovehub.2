@@ -82,6 +82,7 @@
     const SMART_CACHE_MAX = 50;              // searchSmart result cache entry cap
     const MAX_PROVIDER_VARIANTS = 2;       // variants a provider may receive
     const DEFAULT_PROVIDER_PRIORITY = {
+        'codebazan-rjavan': 110,
         'internet-archive': 100,
         'melobit': 90,
         'ahangify': 80,
@@ -89,6 +90,7 @@
         'codebazan': 60
     };
     const DEFAULT_PROVIDER_ENABLED = {
+        'codebazan-rjavan': true,
         'internet-archive': true,
         'melobit': true,
         'ahangify': true,
@@ -379,6 +381,13 @@
         const titleWords = title ? title.split(' ') : [];
         const artistWords = artist ? artist.split(' ') : [];
         const descWords = desc ? desc.split(' ') : [];
+        // Persian (Farsi) metadata fields — providers like Radio Javan return
+        // artist_farsi / song_farsi; a Persian query token matching the Farsi
+        // artist/title is direct field evidence (no transliteration needed).
+        const artistFa = normalizeMusicQuery(track.artist_farsi || '');
+        const titleFa = normalizeMusicQuery(track.song_farsi || track.title_farsi || '');
+        const artistFaWords = artistFa ? artistFa.split(' ') : [];
+        const titleFaWords = titleFa ? titleFa.split(' ') : [];
         const q = ctx.norm;
         const qTokens = ctx.tokens || [];
         const translits = ctx.translits || [];
@@ -391,9 +400,9 @@
         if (nmTitle) { score -= 25; reasons.push('non-music title hint'); }
 
         // --- artist signals (strongest) ------------------------------------
-        const allQInArtist = qTokens.length > 0 && qTokens.every((t) => artistWords.includes(t));
-        const anyQInArtist = qTokens.some((t) => artistWords.includes(t));
-        if (artist && artist === q) { score += 120; reasons.push('artist exact'); }
+        const allQInArtist = qTokens.length > 0 && qTokens.every((t) => artistWords.includes(t) || artistFaWords.includes(t));
+        const anyQInArtist = qTokens.some((t) => artistWords.includes(t) || artistFaWords.includes(t));
+        if ((artist && artist === q) || (artistFa && artistFa === q)) { score += 120; reasons.push('artist exact'); }
         else if (allQInArtist) { score += qTokens.length > 1 ? 95 : 85; reasons.push('artist full'); }
         else if (anyQInArtist) { score += 55; reasons.push('artist partial'); }
         // Transliteration matching. Single-word translits match a word
@@ -419,9 +428,9 @@
         if (trMatches(artistWords)) { score += 60; reasons.push('artist translit'); }
 
         // --- title signals --------------------------------------------------
-        const allQInTitle = qTokens.length > 0 && qTokens.every((t) => titleWords.includes(t));
-        const anyQInTitle = qTokens.some((t) => titleWords.includes(t));
-        if (title && title === q) { score += 100; reasons.push('title exact'); }
+        const allQInTitle = qTokens.length > 0 && qTokens.every((t) => titleWords.includes(t) || titleFaWords.includes(t));
+        const anyQInTitle = qTokens.some((t) => titleWords.includes(t) || titleFaWords.includes(t));
+        if ((title && title === q) || (titleFa && titleFa === q)) { score += 100; reasons.push('title exact'); }
         else if (allQInTitle) { score += 65; reasons.push('title full'); }
         else if (anyQInTitle) { score += 30; reasons.push('title partial'); }
         if (trMatches(titleWords)) { score += 40; reasons.push('title translit'); }
@@ -432,7 +441,8 @@
         // Arabic/Persian title (e.g. "ابی" inside "سنن ابی داود") is weak
         // evidence of relevance and is penalized.
         const isSingleToken = qTokens.length === 1;
-        if (isSingleToken && !anyQInArtist && !trMatches(artistWords) && !trMatches(titleWords) && !(title === q)) {
+        if (isSingleToken && !anyQInArtist && !trMatches(artistWords) && !trMatches(titleWords) && !(title === q)
+            && !artistFaWords.includes(qTokens[0]) && !titleFaWords.includes(qTokens[0])) {
             const titleIdx = titleWords.indexOf(qTokens[0]);
             const anchored = titleWords.length > 0 && (titleIdx === 0 || titleIdx === titleWords.length - 1);
             if (!anchored) {
@@ -492,6 +502,7 @@
 
     // Map an internal provider id → user-visible label (and back).
     const PROVIDER_LABELS = {
+        'codebazan-rjavan': 'Radio Javan',
         'internet-archive': 'Internet Archive',
         'melobit': 'Melobit',
         'ahangify': 'Ahangify',
@@ -712,25 +723,29 @@
             const metaCollArr = Array.isArray(metaColl) ? metaColl : (metaColl ? [metaColl] : []);
             const collArr = docColl.concat(metaCollArr);
 
-            return {
+            // Phase 8 — emit the SAME unified LoveHub track shape as every
+            // other provider (id/provider/title/artist/album/coverUrl/duration/
+            // audioUrl/streamUrl/externalUrl/playable/downloadable/sourceType/
+            // metadata/score/sources + the legacy aliases the UI consumes).
+            const _fileExt = pick ? ((pick.name.match(/\.([a-z0-9]{2,5})$/i) || [])[1] || '').toLowerCase() : '';
+            const t = normalizeTrack({
+                id: identifier,
                 title: rawTitle || identifier,
                 artist: creator || null,
-                source: 'Internet Archive',
-                pageUrl: 'https://archive.org/details/' + encodeURIComponent(identifier),
-                playableUrl: pick
+                album: null,
+                duration: isFinite(duration) ? duration : null,
+                cover: 'https://archive.org/services/img/' + encodeURIComponent(identifier),
+                audioUrl: pick
                     ? ('https://archive.org/download/' + encodeURIComponent(identifier) + '/' + encodeURIComponent(pick.name))
                     : null,
-                artworkUrl: 'https://archive.org/services/img/' + encodeURIComponent(identifier),
-                duration: isFinite(duration) ? duration : null,
-                provider: this.name,
-                providerId: this.id,
+                externalUrl: 'https://archive.org/details/' + encodeURIComponent(identifier),
                 dedupeKey: identifier,
-                // internal signals used by scoring (never rendered)
                 audioEvidence: audio.length > 0,
                 _description: Array.isArray(description) ? description.slice(0, 3) : (description ? [description] : []),
-                _collection: collArr.slice(0, 6),
-                _fileExt: pick ? ((pick.name.match(/\.([a-z0-9]{2,5})$/i) || [])[1] || '').toLowerCase() : ''
-            };
+                _collection: collArr.slice(0, 6)
+            }, { id: this.id, label: this.name, sourceType: 'archive-stream', downloadable: true });
+            if (t) t._fileExt = _fileExt;
+            return t;
         }
 
         // Phase 6 — normalized search (identifiers → resolved tracks).
@@ -823,6 +838,97 @@
                 audioUrl: item.mp3_320 || item.mp3_128 || item.mp3 || item.link_320 || item.link_128 || item.download || item.stream || null,
                 externalUrl: item.link || item.page || null
             }, { id: this.id, label: this.name, sourceType: 'stream' }));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // CodeBazan → Radio Javan — keyless, CORS-open search that returns direct
+    // MP3 links (host*.media-rj.com). Live-verified (Aug 2026): 22/22 queries
+    // HTTP 200, ~600ms latency, direct-browser-audio compatible at HTTP level
+    // (audio/mpeg, Range 206, ACAO *). Direct streaming only — the audio URL
+    // stays the provider URL; LoveHub never proxies/caches/redistributes it.
+    // Legal status: unofficial proxy of third-party media -> 'unknown'.
+    // -----------------------------------------------------------------------
+    class CodeBazanRjavanProvider extends MusicSearchProvider {
+        constructor() {
+            super('Radio Javan', 'codebazan-rjavan');
+            this.preferredQueryKinds = ['original', 'latin'];
+            this.legal = {
+                status: 'unknown',
+                authRequired: false,
+                keyEnv: null,
+                docsUrl: 'https://codebazan.ir',
+                notes: 'CodeBazan search proxy exposing Radio Javan media (host*.media-rj.com). Use for direct browser streaming only; do not proxy, cache or redistribute the files. Terms not verifiable.'
+            };
+        }
+
+        async searchTracks(query) {
+            const q = sanitizeQuery(query);
+            if (!q) return [];
+            const json = await fetchJson(
+                'https://api.codebazan.ir/music/rjavan/?query=' + encodeURIComponent(q),
+                this.timeoutMs
+            );
+            const mp3s = (json && Array.isArray(json.mp3s)) ? json.mp3s : [];
+            return mp3s.map((s) => this._toTrack(s)).filter(Boolean);
+        }
+
+        async getTrack(id) {
+            if (id == null) return null;
+            const json = await fetchJson(
+                'https://api.codebazan.ir/music/rjavan/?id=' + encodeURIComponent(String(id)),
+                this.timeoutMs
+            );
+            if (!json || json.id == null) return null;
+            return this._toTrack(json);
+        }
+
+        // Map one Radio Javan mp3 entry into the unified LoveHub track shape.
+        // Never invents data: unknown fields stay null. Persian labels are
+        // preserved inside metadata and mirrored on top-level aliases.
+        _toTrack(s) {
+            if (!s || typeof s !== 'object') return null;
+            const artist = String(s.artist || '').trim() || null;
+            const titleRaw = String(s.title || '').trim();
+            const songRaw = String(s.song || '').trim();
+            // Titles arrive as Artist - Song; prefer the clean song name
+            // (also improves cross-provider dedupe keys).
+            let title = songRaw || titleRaw || 'Untitled';
+            if (!songRaw && titleRaw && artist) {
+                const prefix = artist + ' - ';
+                if (titleRaw.toLowerCase().startsWith(prefix.toLowerCase())) {
+                    title = titleRaw.slice(prefix.length);
+                }
+            }
+            title = String(title).replace(/^[\u0022\u0027\u201c\u201d]+|[\u0022\u0027\u201c\u201d]+$/g, '').trim().slice(0, 200) || 'Untitled';
+            const link = s.link || null;
+            const duration = Number(s.duration);
+            const t = normalizeTrack({
+                id: s.id != null ? String(s.id) : null,
+                title,
+                artist,
+                album: s.album || null,
+                duration: isFinite(duration) && duration > 0 ? duration : null,
+                cover: s.photo || s.thumbnail || null,
+                audioUrl: link,
+                streamUrl: link,
+                externalUrl: s.share_link || s.permlink || null
+            }, { id: this.id, label: this.name, sourceType: 'direct-audio', downloadable: false });
+            if (t) {
+                t.metadata = Object.assign(t.metadata || {}, {
+                    rjId: s.id != null ? String(s.id) : null,
+                    artist_farsi: s.artist_farsi || null,
+                    song_farsi: s.song_farsi || null,
+                    plays: s.plays || null,
+                    likes: s.likes || null,
+                    hls_link: s.hls_link || null,
+                    lq_link: s.lq_link || null,
+                    hq_link: s.hq_link || null
+                });
+                t.artist_farsi = s.artist_farsi || null;
+                t.song_farsi = s.song_farsi || null;
+            }
+            return t;
         }
     }
 
@@ -1120,8 +1226,11 @@
                 if (!entry.sources.some((s) => (s.provider === pid || pid == null) && s.audioUrl === src.audioUrl)) {
                     entry.sources.push(src);
                 }
-                // Highest-priority source provides the primary playable fields.
-                if (!entry.playableUrl || rankOf(pid) < rankOf(providerIdOf(entry))) {
+                // Highest-priority source provides the primary playable fields
+                // (Radio Javan 110 > Internet Archive 100 when both carry the
+                // same track), and its extra metadata (Persian labels, cover,
+                // provider-specific ids) is folded in for the UI.
+                if (rankOf(pid) < rankOf(providerIdOf(entry)) || !entry.playableUrl) {
                     entry.playableUrl = t.playableUrl || entry.playableUrl;
                     entry.audioUrl = t.audioUrl || t.playableUrl || entry.audioUrl;
                     entry.artworkUrl = t.artworkUrl || t.coverUrl || entry.artworkUrl;
@@ -1132,6 +1241,11 @@
                     entry.providerId = pid || entry.providerId;
                     entry.dedupeKey = t.dedupeKey || entry.dedupeKey;
                     entry.audioEvidence = t.audioEvidence || entry.audioEvidence;
+                    entry.artist_farsi = t.artist_farsi || entry.artist_farsi;
+                    entry.song_farsi = t.song_farsi || entry.song_farsi;
+                    if (t.metadata && (t.metadata.artist_farsi || t.metadata.rjId)) {
+                        entry.metadata = Object.assign({}, entry.metadata || {}, t.metadata);
+                    }
                 }
             }
             return Array.from(map.values());
@@ -1149,6 +1263,7 @@
                 new AhangifyProvider(),
                 new MelodifyProvider(),
                 new CodeBazanProvider(),
+                new CodeBazanRjavanProvider(),
                 new DirectAudioProvider()
             ];
             this.manager = new MusicProviderManager();
@@ -1345,5 +1460,6 @@
     window.MusicSearch.AhangifyProvider = AhangifyProvider;
     window.MusicSearch.MelodifyProvider = MelodifyProvider;
     window.MusicSearch.CodeBazanProvider = CodeBazanProvider;
+    window.MusicSearch.CodeBazanRjavanProvider = CodeBazanRjavanProvider;
     window.MusicSearch.DirectAudioProvider = DirectAudioProvider;
 })();
