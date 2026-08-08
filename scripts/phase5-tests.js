@@ -830,6 +830,94 @@ async function main() {
         assert(Array.isArray(out.providers) && out.providers.length >= 5, 'diagnostics attached');
     });
 
+    // ---------------------------------------------------------------------------
+    console.log('\n== music-search: performance safeguards (Phase 6.5) ==');
+
+    await test('manager: failure cooldown — recently failed provider is not re-queried', async () => {
+        const m = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 2000, cooldownMs: 60000 });
+        m.registerProvider(fakeProvider('bad', 'Bad', { throwError: 'boom' }));
+        m.registerProvider(fakeProvider('good', 'Good', { items: [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://x/d.mp3' }] }));
+        const ctx = buildCtx('ebi');
+        const variants = buildSearchVariants('ebi');
+        await m.searchOthers('ebi', ctx, variants, 'nope');
+        const out2 = await m.searchOthers('ebi', ctx, variants, 'nope');
+        assert(out2.length === 1, 'healthy provider still returns results');
+        const d = m.diagnostics().find((x) => x.id === 'bad');
+        assert(d.searches === 1, 'failed provider queried only once (cooldown), searches=' + d.searches);
+        assert(d.failures === 1 && /cooling down/.test(d.lastError || ''), 'cooldown surfaced in diagnostics: ' + d.lastError);
+        assert(d.coolingDown === true, 'coolingDown flag set');
+    });
+
+    await test('searchSmart: identical query served from short-lived cache', async () => {
+        const realFetch = sandbox.fetch;
+        let advCalls = 0;
+        sandbox.fetch = (url, init) => {
+            if (String(url).includes('advancedsearch')) {
+                advCalls++;
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ response: { docs: [
+                    { identifier: 'delbar-cache-track', title: 'Ebi: Delbar', creator: 'Ebi' }
+                ] } }) });
+            }
+            if (String(url).includes('/metadata/')) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                    metadata: { creator: 'Ebi' },
+                    files: [{ name: 'delbar.mp3', format: 'VBR MP3', size: 4000, length: '200.5' }]
+                }) });
+            }
+            if (init && init.method === 'HEAD') {
+                return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            }
+            return Promise.reject(new Error('unexpected fetch: ' + String(url).slice(0, 80)));
+        };
+        try {
+            const first = await sandbox.window.MusicSearch.searchSmart('delbar');
+            assert(first.state === 'ok' && first.results.length >= 1, 'first search resolved, state=' + first.state);
+            const afterFirst = advCalls;
+            const second = await sandbox.window.MusicSearch.searchSmart('delbar');
+            assert(advCalls === afterFirst, 'no re-fetch on cached query (adv=' + advCalls + ' vs ' + afterFirst + ')');
+            assert(second.results.length === first.results.length, 'cached result shape matches');
+        } finally {
+            sandbox.fetch = realFetch;
+        }
+    });
+
+    await test('searchSmart: IA variants fetched concurrently (bounded pool) + early stop', async () => {
+        const realFetch = sandbox.fetch;
+        const reg = sandbox.window.MusicSearch;
+        const ia = reg.manager.getProvider('internet-archive');
+        const realIds = ia.searchIdentifiers;
+        const realResolve = ia.resolveTrack;
+        let active = 0, maxActive = 0, calls = 0;
+        ia.searchIdentifiers = async () => {
+            active++; if (active > maxActive) maxActive = active;
+            calls++;
+            await new Promise((r) => setTimeout(r, 40));
+            active--;
+            return [{ identifier: 'c' + calls, title: 'Concqueries Track ' + calls, creator: 'Some Artist' }];
+        };
+        ia.resolveTrack = async (doc) => ({
+            title: doc.title, artist: doc.creator, provider: 'Internet Archive',
+            providerId: 'internet-archive', source: 'Internet Archive',
+            playableUrl: 'https://x/' + doc.identifier + '.mp3', dedupeKey: doc.identifier,
+            audioEvidence: true, _description: [], _collection: []
+        });
+        sandbox.fetch = (url, init) => {
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            return Promise.reject(new Error('unexpected fetch: ' + String(url).slice(0, 60)));
+        };
+        try {
+            const out = await reg.searchSmart('concqueries');
+            assert(out.state === 'ok' && out.results.length >= 1, 'results produced, state=' + out.state);
+            assert(calls >= 2 && calls <= 4, 'variant searches ran, calls=' + calls);
+            assert(maxActive >= 2, 'variants overlapped (parallel), maxActive=' + maxActive);
+            assert(maxActive <= 2, 'pool bounded at 2, maxActive=' + maxActive);
+        } finally {
+            ia.searchIdentifiers = realIds;
+            ia.resolveTrack = realResolve;
+            sandbox.fetch = realFetch;
+        }
+    });
+
     console.log('\nResults:', passes, 'passed,', failures, 'failed');
     process.exit(failures ? 1 : 0);
 }

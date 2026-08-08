@@ -75,6 +75,11 @@
     const POOL_LIMIT = 3;                  // bounded provider concurrency
     const CACHE_TTL_MS = 60000;            // provider search cache TTL (ms)
     const CACHE_MAX = 200;                 // provider search cache entry cap
+    const PROVIDER_COOLDOWN_MS = 30000;      // skip a provider that just failed (session safety)
+    const IA_VARIANT_CONCURRENCY = 2;        // parallel IA variant searches (bounded, polite)
+    const IA_STOP_DOCS = 14;                 // stop variant searches once enough candidates found
+    const SMART_CACHE_TTL_MS = 30000;        // searchSmart result cache TTL (repeated searches)
+    const SMART_CACHE_MAX = 50;              // searchSmart result cache entry cap
     const MAX_PROVIDER_VARIANTS = 2;       // variants a provider may receive
     const DEFAULT_PROVIDER_PRIORITY = {
         'internet-archive': 100,
@@ -886,6 +891,7 @@
                 cacheTtlMs: cfg.cacheTtlMs || CACHE_TTL_MS,
                 cacheMax: cfg.cacheMax || CACHE_MAX,
                 timeoutMs: Object.assign({ default: PROVIDER_TIMEOUT_MS }, cfg.timeoutMs),
+                cooldownMs: cfg.cooldownMs || PROVIDER_COOLDOWN_MS,
                 priority: Object.assign({}, DEFAULT_PROVIDER_PRIORITY, cfg.priority),
                 enabled: Object.assign({}, DEFAULT_PROVIDER_ENABLED, cfg.enabled)
             };
@@ -968,7 +974,8 @@
                     searches: d.searches || 0,
                     failures: d.failures || 0,
                     lastLatencyMs: d.lastLatencyMs != null ? d.lastLatencyMs : null,
-                    lastError: d.lastError || null
+                    lastError: d.lastError || null,
+                    coolingDown: !!(d.cooldownUntil && Date.now() < d.cooldownUntil)
                 };
             });
         }
@@ -1023,6 +1030,16 @@
                 this._record(p.id, 0, new Error('skipped (deadline)'));
                 return [];
             }
+            const diag = this._diag.get(p.id);
+            // Failure cooldown: a provider that just errored/timed out is
+            // skipped for a short window so a dead API never stalls the
+            // search ("avoid waiting for unavailable providers").
+            if (diag && diag.cooldownUntil && Date.now() < diag.cooldownUntil) {
+                const secs = Math.max(1, Math.ceil((diag.cooldownUntil - Date.now()) / 1000));
+                diag.lastLatencyMs = 0;
+                diag.lastError = 'cooling down (' + secs + 's)';
+                return [];
+            }
             const cacheKey = p.id + '|' + normalizeMusicQuery(variant);
             const cached = this._cacheGet(cacheKey);
             if (cached) { this._record(p.id, 1, null); return cached; }
@@ -1030,10 +1047,12 @@
                 const items = await this._withTimeout(p.searchTracks(variant), this._timeoutFor(p));
                 const tracks = (Array.isArray(items) ? items : []).filter(Boolean);
                 this._record(p.id, Date.now() - started, null);
+                if (diag) diag.cooldownUntil = null; // healthy again
                 this._cacheSet(cacheKey, tracks);
                 return tracks;
             } catch (err) {
                 this._record(p.id, Date.now() - started, err);
+                if (diag) diag.cooldownUntil = Date.now() + this.config.cooldownMs;
                 return [];
             }
         }
@@ -1135,6 +1154,22 @@
             this.manager = new MusicProviderManager();
             this.providers.forEach((p) => this.manager.registerProvider(p));
             this.manager.disable('direct-audio'); // reserved for a future source
+            this._smartCache = new Map(); // short-lived searchSmart result cache
+        }
+
+        _smartCacheGet(key) {
+            const e = this._smartCache.get(key);
+            if (!e) return null;
+            if (Date.now() - e.at > SMART_CACHE_TTL_MS) { this._smartCache.delete(key); return null; }
+            return e.value;
+        }
+
+        _smartCacheSet(key, value) {
+            if (this._smartCache.size >= SMART_CACHE_MAX) {
+                const oldest = this._smartCache.keys().next().value;
+                if (oldest !== undefined) this._smartCache.delete(oldest);
+            }
+            this._smartCache.set(key, { at: Date.now(), value });
         }
 
         registerProvider(p) {
@@ -1174,7 +1209,10 @@
             const seen = new Set();
             const docs = [];
             let failed = 0;
-            for (const v of variants) {
+            let succeeded = 0;
+            const stopEarly = () => docs.length >= IA_STOP_DOCS && succeeded >= 2;
+            const tasks = variants.map((v) => async () => {
+                if (stopEarly()) return; // enough candidates already found
                 try {
                     const batch = (await ia.searchIdentifiers(v)) || [];
                     for (const d of batch) {
@@ -1182,11 +1220,15 @@
                         seen.add(d.identifier);
                         docs.push(d);
                     }
+                    succeeded++;
                 } catch (err) {
                     failed++;
                     console.warn('[MusicSearch] variant failed:', v, err && err.message);
                 }
-            }
+            });
+            // Parallel variant searches (bounded, polite) — the old sequential
+            // loop was the main search-latency cost (up to 4 × ~2-4s).
+            await this.manager._runPool(tasks, IA_VARIANT_CONCURRENCY);
             if (docs.length === 0) return { tracks: [], failed };
             if (docs.length > MAX_DOCS) docs.length = MAX_DOCS;
 
@@ -1218,6 +1260,17 @@
         // the merged results go through the same rank/filter/probe stages.
         async searchSmart(query) {
             const q = sanitizeQuery(query);
+            // Short-lived result cache for repeated queries (30s TTL): the
+            // second identical search is served entirely from memory — no
+            // provider calls, no probes.
+            const cacheKey = q ? (normalizeMusicQuery(q) || q) : '';
+            if (cacheKey) {
+                const cached = this._smartCacheGet(cacheKey);
+                if (cached) {
+                    cached.providers = this.manager.diagnostics();
+                    return cached;
+                }
+            }
             const emptyResp = {
                 results: [], rawCount: 0, relevantCount: 0,
                 playableCount: 0, nonPlayableCount: 0, query: q
@@ -1263,6 +1316,7 @@
                 }
             }
             out.providers = this.manager.diagnostics();
+            if (cacheKey) this._smartCacheSet(cacheKey, out);
             return out;
         }
     }
