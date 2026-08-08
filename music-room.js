@@ -184,6 +184,7 @@
             this._lastContinueSave = 0;
             this._moreMenu = null;
             this._favChannelBound = false;
+            this._pendingNpOpen = false;
 
             this._els = {
                 page: document.querySelector('.page[data-page="music"]'),
@@ -319,6 +320,7 @@
             this.myUid = null;
             this.favorites = [];
             this.results = [];
+            this._pendingNpOpen = false;
             if (this._favChannelBound && window.LoveHubMusic) {
                 window.LoveHubMusic.unsubscribeFavorites();
                 this._favChannelBound = false;
@@ -346,15 +348,23 @@
             if (this._view === 'search' && this._els.input && !this._els.input.value && !this.results.length) {
                 this._setSearchState('idle');
             }
+            if (this._pendingNpOpen) {
+                this._pendingNpOpen = false;
+                if (this.player.current) this._openNowPlaying();
+            }
         }
 
         onPageChanged(page) {
             this._updateMiniPlayer();
             if (page !== 'music') {
+                // Leaving the Music Room: every overlay is hidden and Now
+                // Playing closes (it lives inside #musicPage). The visualizer
+                // always stops so it never animates a hidden canvas.
+                this._closeNowPlaying(true);
                 this._hideQueue();
                 this._hideSheet(this._els.sleepSheet);
                 this._hideSheet(this._els.eqSheet);
-                if (!this._npOpen) this._stopVisualizer();
+                this._stopVisualizer();
             }
         }
 
@@ -406,7 +416,8 @@
             const page = this._els.page;
             if (page) page.dataset.mood = this._mood;
             const m = MOODS[this._mood] || MOODS.romantic;
-            document.documentElement.style.setProperty('--music-mood', m.hue);
+            // Mood accent lives on the Music page only - never the document root.
+            if (page) page.style.setProperty('--music-mood', m.hue);
         }
 
         setMood(key) {
@@ -490,8 +501,16 @@
             if (mini) {
                 mini.addEventListener('click', (e) => {
                     if (e.target.closest('button')) return;
-                    if (this.player.current) this._openNowPlaying();
-                    else { const app = window.app; if (app) app.navigateTo('music'); }
+                    const app = window.app;
+                    if (!this.player.current) { if (app) app.navigateTo('music'); return; }
+                    // Now Playing lives INSIDE #musicPage - if the Music page
+                    // is not active, open it first, then show Now Playing.
+                    if (app && app.currentPage !== 'music') {
+                        this._pendingNpOpen = true;
+                        app.navigateTo('music');
+                        return;
+                    }
+                    this._openNowPlaying();
                 });
             }
             if (this._els.miniPlay) {
@@ -1026,7 +1045,9 @@
             });
             menu.addEventListener('pointerdown', (e) => e.stopPropagation());
             document.addEventListener('pointerdown', this._closeMoreMenuBound = () => this._closeMoreMenu(), { once: true });
-            document.body.appendChild(menu);
+            // Mounted INSIDE #musicPage so the menu can never escape the page.
+            const host = this._els.page || document.body;
+            host.appendChild(menu);
             this._moreMenu = menu;
             const r = anchor.getBoundingClientRect();
             const mw = 220;
@@ -1228,7 +1249,6 @@
             const np = this._els.np;
             if (!np) return;
             np.classList.add('open');
-            document.body.style.overflow = 'hidden';
             this._renderNowPlaying();
             this._startVisualizer();
             if (this.visualizer) this.visualizer.setPlaying(this.player.playing);
@@ -1239,7 +1259,6 @@
             this._npOpen = false;
             const np = this._els.np;
             if (np) np.classList.remove('open');
-            document.body.style.overflow = '';
             if (!silent) {
                 this._renderHero();
                 this._startVisualizer();
@@ -1274,7 +1293,7 @@
                 this._els.npRepeat.classList.toggle('on', on);
                 this._els.npRepeat.dataset.mode = s.repeat;
                 this._els.npRepeat.setAttribute('aria-pressed', String(on));
-                const inner = this._els.npRepeat.querySelector('.np-repeat-dot');
+                const inner = this._els.npRepeat.querySelector('.music-np-repeat-dot');
                 if (inner) inner.style.display = s.repeat === 'one' ? '' : 'none';
             }
             if (this._els.npFav) {
@@ -1340,10 +1359,13 @@
             const c1 = palette ? 'rgb(' + palette[0].join(',') + ')' : m.hue;
             const c2 = palette && palette[1] ? 'rgb(' + palette[1].join(',') + ')' : '#BF5AF2';
             const c3 = palette && palette[2] ? 'rgb(' + palette[2].join(',') + ')' : '#5E5CE6';
-            const root = document.documentElement;
-            root.style.setProperty('--np-c1', c1);
-            root.style.setProperty('--np-c2', c2);
-            root.style.setProperty('--np-c3', c3);
+            // Ambient palette vars live on the Music page only - never :root.
+            const root = this._els.page;
+            if (root) {
+                root.style.setProperty('--np-c1', c1);
+                root.style.setProperty('--np-c2', c2);
+                root.style.setProperty('--np-c3', c3);
+            }
             if (this.visualizer) this.visualizer.setColors(c1, c2, c3);
         }
 

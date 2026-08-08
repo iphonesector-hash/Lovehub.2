@@ -68,8 +68,14 @@
         // no-op (so we never stack analysers).
         attach(audioEl) {
             if (!audioEl) { this._real = false; return; }
+            if (this._src && this._mediaEl === audioEl) return; // already attached to this element
             this._mediaEl = audioEl;
-            if (this._src && this._mediaEl) return; // already attached
+            // Re-attaching a DIFFERENT element (player recreated after
+            // sign-out/in): tear down the old graph before wiring the new one,
+            // so we never stack analysers on dead elements.
+            this._disconnectEq();
+            if (this._src) { try { this._src.disconnect(); } catch (e) { /* ignore */ } }
+            if (this._analyser) { try { this._analyser.disconnect(); } catch (e) { /* ignore */ } }
             try {
                 const AC = window.AudioContext || window.webkitAudioContext;
                 if (!AC) throw new Error('no Web Audio');

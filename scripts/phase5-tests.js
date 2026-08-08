@@ -426,6 +426,61 @@ async function main() {
     });
 
     // ===========================================================================
+    // Music Room UI isolation (regression): the Music Room must never touch
+    // global layout — no fixed overlays, no unscoped selectors, no
+    // document.body/:root writes, and every overlay must be inside #musicPage.
+    // ===========================================================================
+
+    await test('music-room.css has no position:fixed overlays', async () => {
+        const css = fs.readFileSync('music-room.css', 'utf8');
+        assert(!css.includes('position: fixed'), 'no fixed positioning anywhere');
+        assert(css.split('{').length === css.split('}').length, 'braces balanced');
+    });
+
+    await test('music-room.css selectors are all scoped', async () => {
+        const css = fs.readFileSync('music-room.css', 'utf8');
+        const bad = [];
+        css.split('\n').forEach((line) => {
+            const t = line.trim();
+            if (!t || t.startsWith('@') || t.startsWith('/*') || t.startsWith('*') || t.startsWith('//')) return;
+            const open = t.indexOf('{');
+            if (open < 0) return; // continuation / closing line
+            t.slice(0, open).split(',').forEach((selRaw) => {
+                const s = selRaw.trim();
+                if (!s) return;
+                if (/^\d/.test(s) || s === 'from' || s === 'to') return; // keyframe steps
+                const m = s.match(/^([.#]?[a-zA-Z][\w-]*)/);
+                const first = m ? m[1] : s;
+                const ok = first.indexOf('.music') === 0 || first === '.mini-player' || first === '#musicPage' ||
+                    s.startsWith('.page[data-page="music"]');
+                if (!ok) bad.push(s);
+            });
+        });
+        assert(bad.length === 0, 'unscoped selectors: ' + bad.slice(0, 5).join(' | '));
+        assert(!/\.np-[a-z]/.test(css), 'no leftover .np- classes');
+    });
+
+    await test('music-room.js never writes to document.body / :root', async () => {
+        const js = fs.readFileSync('music-room.js', 'utf8');
+        assert(!js.includes('document.body.appendChild'), 'no body append');
+        assert(!js.includes('document.body.style'), 'no body style writes');
+        assert(!js.includes('document.documentElement.style'), 'no :root style writes');
+        assert(js.includes('host.appendChild(menu)'), 'more menu mounts inside the page');
+    });
+
+    await test('index.html mounts all Music overlays inside #musicPage', async () => {
+        const html = fs.readFileSync('index.html', 'utf8');
+        const idx = (id) => html.indexOf('id="' + id + '"');
+        assert(idx('musicPage') > -1, 'musicPage exists');
+        const profile = html.indexOf('data-page="profile"');
+        ['musicQueueSheet', 'musicNowPlaying', 'musicSleepSheet', 'musicEqSheet'].forEach((id) => {
+            const i = idx(id);
+            assert(i > idx('musicPage') && i < profile, id + ' must be inside #musicPage');
+        });
+        assert(!html.includes('class="np-'), 'no leftover np- classes in HTML');
+    });
+
+    // ===========================================================================
     console.log('\nResults:', passes, 'passed,', failures, 'failed');
     process.exit(failures ? 1 : 0);
 }
