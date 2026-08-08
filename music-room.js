@@ -692,14 +692,11 @@
             this._renderResults([]);
             this._rememberSearch(q);
             try {
-                const results = await window.MusicSearch.search(q);
+                const out = await window.MusicSearch.searchSmart(q);
                 if (seq !== this._searchSeq) return; // superseded by a newer search
-                this.results = results;
-                const playable = results.filter((t) => t.playableUrl);
-                if (!results.length) this._setSearchState('empty');
-                else if (!playable.length) this._setSearchState('noplayable');
-                else this._setSearchState('ok');
-                this._renderResults(results);
+                this.results = out.results || [];
+                this._setSearchState(out.state, { hasPersian: /[\u0600-\u06ff]/.test(out.query || q) });
+                this._renderResults(this.results);
             } catch (err) {
                 if (seq !== this._searchSeq) return;
                 this._setSearchState('error');
@@ -710,7 +707,7 @@
             if (this._query) this.doSearch(this._query, true);
         }
 
-        _setSearchState(kind) {
+        _setSearchState(kind, opts) {
             const state = this._els.state;
             if (!state) return;
             state.innerHTML = '';
@@ -720,6 +717,10 @@
                 p.classList.add('music-shimmer');
             } else if (kind === 'empty') {
                 p.textContent = 'No results found. Try another song, artist, or language.';
+            } else if (kind === 'filtered') {
+                p.textContent = (opts && opts.hasPersian)
+                    ? 'No good matches found. For Persian names, try the artist’s English spelling (e.g. “Ebi”).'
+                    : 'No good matches found — try another spelling, artist, or song name.';
             } else if (kind === 'noplayable') {
                 p.textContent = 'No playable results found — try a different query.';
             } else if (kind === 'error') {

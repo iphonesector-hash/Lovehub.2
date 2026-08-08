@@ -481,6 +481,172 @@ async function main() {
     });
 
     // ===========================================================================
+    console.log('\n== music-search: relevance, transliteration & playability (Phase 5.5 fix) ==');
+
+    const normM = sandbox.window.MusicSearch.normalizeMusicQuery;
+    const translit = sandbox.window.MusicSearch.transliteratePersian;
+    const variants = sandbox.window.MusicSearch.buildSearchVariants;
+    const looksPlay = sandbox.window.MusicSearch.looksPlayableUrl;
+    const scoreT = sandbox.window.MusicSearch.scoreTrack;
+    const rankF = sandbox.window.MusicSearch.rankAndFilter;
+    const buildCtx = sandbox.window.MusicSearch.buildQueryContext;
+
+    await test('normalizeMusicQuery: Persian variants, zero-width, diacritics', () => {
+        assert(normM('\u200fابی\u200f') === 'ابی', 'strips bidi/zero-width around Persian');
+        assert(normM('ابي') === 'ابی', 'ي → ی');
+        assert(normM('كامل') === 'کامل', 'ك → ک');
+        assert(normM('نشرة') === 'نشره', 'ة → ه');
+        assert(normM('Hello, World!') === 'hello world', 'punctuation folded');
+        assert(normM('Coldplay\u200cYellow') === 'coldplay yellow', 'ZWNJ → space');
+        assert(normM('Delbar — Ebi') === 'delbar ebi', 'em dash → space');
+        assert(normM('   A  B\tC  ') === 'a b c', 'whitespace collapsed');
+        assert(normM('x'.repeat(300)).length === 120, 'capped at 120');
+    });
+
+    await test('transliteratePersian: ابی yields Ebi variants', () => {
+        const t = translit('ابی');
+        assert(t.some((x) => x.toLowerCase() === 'ebi'), 'contains Ebi: ' + t.join(','));
+        assert(t.some((x) => x.toLowerCase() === 'abi'), 'contains abi variant');
+        assert(translit('Coldplay').length === 0, 'Latin input → no transliteration');
+    });
+
+    await test('transliteratePersian: محسن چاوشی yields Mohsen Chavoshi alias', () => {
+        const t = translit('محسن چاوشی');
+        assert(t.some((x) => x.toLowerCase() === 'mohsen chavoshi'), 'alias present');
+    });
+
+    await test('transliteratePersian: ستاره های سربی yields compact setarehaye sorbi', () => {
+        const t = translit('ستاره های سربی');
+        assert(t.some((x) => x.toLowerCase() === 'setarehaye sorbi'), 'compact merged form present: ' + t.join(','));
+        assert(t.some((x) => x.toLowerCase() === 'setareh haye sorbi'), 'spaced form present too');
+    });
+
+    await test('scoreTrack: Setarehaye Sorbi title matches Persian query via compact translit', () => {
+        const ctx = buildCtx('ستاره های سربی');
+        const s = scoreT({ title: 'Ebi - Setarehaye Sorbi', artist: 'Ebi', audioEvidence: true, playableUrl: 'https://x/s.mp3' }, ctx);
+        assert(s.score >= 55, 'compact translit phrase matched title, got ' + s.score);
+    });
+
+    await test('buildSearchVariants: bounded, original first, Latin added for Persian', () => {
+        const v = variants('ابی');
+        assert(v[0] === 'ابی', 'original query first');
+        assert(v.some((x) => x.toLowerCase() === 'ebi'), 'Latin variant added');
+        assert(v.length <= 6, 'bounded at 6, got ' + v.length);
+        assert(variants('Coldplay Yellow').length === 1, 'Latin query stays single variant');
+    });
+
+    await test('scoreTrack: "Ebi" + "Ebi - Delbar" scores very high', () => {
+        const ctx = buildCtx('Ebi');
+        const s = scoreT({ title: 'Delbar — Ebi', artist: 'Ebi', audioEvidence: true, playableUrl: 'https://x/ebi.mp3' }, ctx);
+        assert(s.score >= 150, 'high relevance, got ' + s.score);
+    });
+
+    await test('scoreTrack: "Ebi" + "SA\'AD BIN ABI WAQAS" is irrelevant', () => {
+        const ctx = buildCtx('Ebi');
+        const s = scoreT({
+            title: "SA' AD BIN ABI WAQAS", artist: 'Islam', audioEvidence: true,
+            playableUrl: 'https://x/a.mp3', _description: ['islamic documentary']
+        }, ctx);
+        assert(s.score < 55, 'low relevance, got ' + s.score);
+    });
+
+    await test('scoreTrack: no false positives — "ebi" never matches "abi waqas"', () => {
+        const ctx = buildCtx('ebi');
+        const s = scoreT({ title: 'Life of Companions', artist: 'Abi Waqas', audioEvidence: true, playableUrl: 'https://x/a.mp3' }, ctx);
+        assert(s.score < 55, 'word-boundary match only, got ' + s.score);
+    });
+
+    await test('scoreTrack: Persian query matches Persian artist/title', () => {
+        const ctx = buildCtx('ابی');
+        const s = scoreT({ title: 'ابی', artist: 'ابی', audioEvidence: true, playableUrl: 'https://x/b.mp3' }, ctx);
+        assert(s.score >= 150, 'high score, got ' + s.score);
+    });
+
+    await test('scoreTrack: ستاره های سربی title match scores high', () => {
+        const ctx = buildCtx('ستاره های سربی');
+        const s = scoreT({ title: 'ستاره های سربی', artist: 'محسن چاوشی', audioEvidence: true, playableUrl: 'https://x/s.mp3' }, ctx);
+        assert(s.score >= 100, 'high score, got ' + s.score);
+    });
+
+    await test('scoreTrack: Arabic lecture containing ابی is filtered out', () => {
+        const ctx = buildCtx('ابی');
+        const s = scoreT({
+            title: 'محاضرة حول ابی واقص', artist: 'شيخ', audioEvidence: true,
+            playableUrl: 'https://x/l.mp3', _description: ['islamic lecture']
+        }, ctx);
+        assert(s.score < 55, 'low score, got ' + s.score);
+    });
+
+    await test('scoreTrack: title-anchored token (Ebi HEZARO YEK SHAB) stays relevant', () => {
+        const ctx = buildCtx('ebi');
+        const s = scoreT({ title: 'Ebi HEZARO YEK SHAB', artist: null, audioEvidence: true, playableUrl: 'https://x/e.mp3' }, ctx);
+        assert(s.score >= 55, 'kept (token anchors title start), got ' + s.score);
+    });
+
+    await test('scoreTrack: lone token buried mid-title (سنن ابی داود) is filtered', () => {
+        const ctx = buildCtx('ابی');
+        const s = scoreT({ title: 'سنن ابی داود', artist: null, audioEvidence: true, playableUrl: 'https://x/h.mp3' }, ctx);
+        assert(s.score < 55, 'filtered (mid-phrase Arabic title), got ' + s.score);
+    });
+
+    await test('scoreTrack: Persian artist query matches Latin artist alias phrase', () => {
+        const ctx = buildCtx('محسن چاوشی');
+        const s = scoreT({ title: 'Peyman', artist: 'Mohsen Chavoshi', audioEvidence: true, playableUrl: 'https://x/m.mp3' }, ctx);
+        assert(s.score >= 55, 'multi-word translit matched artist, got ' + s.score);
+    });
+
+    await test('rankAndFilter: dedupes same identifier from multiple variants', () => {
+        const ctx = buildCtx('Ebi');
+        const out = rankF([
+            { title: 'Delbar', artist: 'Ebi', dedupeKey: 'item1', playableUrl: 'https://x/1.mp3', audioEvidence: true },
+            { title: 'Delbar', artist: 'Ebi', dedupeKey: 'item1', playableUrl: 'https://x/1.mp3', audioEvidence: true },
+            { title: 'Ebi Concert', artist: 'Ebi', dedupeKey: 'item2', playableUrl: 'https://x/2.mp3', audioEvidence: true }
+        ], ctx);
+        assert(out.results.filter((r) => r.dedupeKey === 'item1').length === 1, 'duplicate collapsed');
+        assert(out.rawCount === 2 && out.relevantCount === 2, 'counts correct after dedupe (3 → 2 unique)');
+    });
+
+    await test('looksPlayableUrl: audio accepted, non-audio rejected', () => {
+        assert(looksPlay('https://x/song.mp3') === true, 'mp3 ok');
+        assert(looksPlay('https://x/song.m4a?token=1') === true, 'm4a with query ok');
+        assert(looksPlay('https://x/song.ogg') === true, 'ogg ok');
+        assert(looksPlay('https://x/notes.pdf') === false, 'pdf no');
+        assert(looksPlay('https://x/readme.html') === false, 'html no');
+        assert(looksPlay('https://x/a.txt') === false, 'txt no');
+        assert(looksPlay(null) === false && looksPlay('') === false, 'missing url no');
+    });
+
+    await test('rankAndFilter: distinct states empty/filtered/noplayable/ok', () => {
+        const ctx = buildCtx('Ebi');
+        assert(rankF([], ctx).state === 'empty', 'no provider results');
+        const junk = [{ title: 'Lecture on birds', artist: 'Z', playableUrl: 'https://x/a.mp3', audioEvidence: true, _description: ['lecture series'] }];
+        assert(rankF(junk, ctx).state === 'filtered', 'found but none relevant');
+        const noPlay = [{ title: 'Ebi Live', artist: 'Ebi', playableUrl: null, audioEvidence: false }];
+        assert(rankF(noPlay, ctx).state === 'noplayable', 'relevant but none playable');
+        const ok = [{ title: 'Delbar', artist: 'Ebi', playableUrl: 'https://x/1.mp3', audioEvidence: true }];
+        assert(rankF(ok, ctx).state === 'ok', 'good result');
+    });
+
+    await test('probePlayable: confirms real audio via HEAD, rejects 404', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = (url, init) => {
+            if (init && init.method === 'HEAD') {
+                return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            }
+            return Promise.resolve({ status: 200, headers: { get: () => 'text/html' } });
+        };
+        try {
+            const ok = await sandbox.window.MusicSearch.probePlayable('https://x/a.mp3');
+            assert(ok && ok.ok === true, 'audio HEAD accepted');
+            sandbox.fetch = () => Promise.resolve({ status: 404, headers: { get: () => 'text/html' } });
+            const bad = await sandbox.window.MusicSearch.probePlayable('https://x/missing.mp3');
+            assert(bad && bad.ok === false, '404 rejected');
+        } finally {
+            sandbox.fetch = realFetch;
+        }
+    });
+
+    // ===========================================================================
     console.log('\nResults:', passes, 'passed,', failures, 'failed');
     process.exit(failures ? 1 : 0);
 }
