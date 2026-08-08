@@ -44,6 +44,18 @@ const LoveHubData = {
     ],
     games: [
         {
+            id: 'snake3d',
+            name: 'Snake 3D',
+            description: 'Sector Edition — premium 3D adventure',
+            cover: 'snake-cover',
+            rating: 5.0,
+            wins: 0,
+            lastPlayed: 'New',
+            playable: true,
+            href: 'games/snake-3d/',
+            coverContent: '<div style="font-size:28px;line-height:1">🐍</div>'
+        },
+        {
             id: 'chess',
             name: 'Couple Chess',
             description: 'Classic strategy for two',
@@ -125,4 +137,3 @@ const LoveHubData = {
     ],
     settings: { theme: 'night', notifications: true }
 };
-
