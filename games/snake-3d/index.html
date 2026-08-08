@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0a0a12">
+  <title>LoveHub Snake 3D — Sector Edition</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/game.css">
+</head>
+<body>
+  <div id="game-root">
+    <div id="canvas-container"></div>
+
+    <div id="hud" class="hud hidden">
+      <div class="hud-top">
+        <div class="hud-score">
+          <span class="label" data-i18n="score">Score</span>
+          <span id="score-value">0</span>
+        </div>
+        <div class="hud-combo hidden" id="combo-display">
+          <span id="combo-value">x1</span>
+        </div>
+        <div class="hud-right">
+          <button id="btn-pause" class="hud-btn" aria-label="Pause">❚❚</button>
+        </div>
+      </div>
+      <div class="hud-bottom">
+        <div id="objective" class="objective" data-i18n="objective_collect">Collect food</div>
+      </div>
+    </div>
+
+    <div id="screen-menu" class="screen">
+      <div class="menu-bg"></div>
+      <div class="menu-content">
+        <div class="logo-area">
+          <div class="sector-badge">SECTOR</div>
+          <h1 class="game-title">SNAKE 3D</h1>
+          <p class="game-subtitle" data-i18n="subtitle">LoveHub Edition</p>
+        </div>
+
+        <div class="menu-buttons">
+          <button id="btn-play" class="btn btn-primary" data-i18n="play">PLAY</button>
+          <button id="btn-worlds" class="btn btn-secondary" data-i18n="worlds">WORLDS</button>
+          <button id="btn-customize" class="btn btn-secondary" data-i18n="customize">CUSTOMIZE</button>
+          <button id="btn-settings" class="btn btn-ghost" data-i18n="settings">SETTINGS</button>
+        </div>
+
+        <div class="menu-stats">
+          <div class="stat">
+            <span class="stat-value" id="best-score">0</span>
+            <span class="stat-label" data-i18n="best_score">Best</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="player-level">1</span>
+            <span class="stat-label" data-i18n="level">Level</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="coins">0</span>
+            <span class="stat-label" data-i18n="coins">Coins</span>
+          </div>
+        </div>
+
+        <div class="lang-switch">
+          <button id="btn-lang-en" class="lang-btn active">EN</button>
+          <button id="btn-lang-fa" class="lang-btn">فا</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="screen-pause" class="screen hidden">
+      <div class="panel">
+        <h2 data-i18n="paused">PAUSED</h2>
+        <button id="btn-resume" class="btn btn-primary" data-i18n="resume">RESUME</button>
+        <button id="btn-restart" class="btn btn-secondary" data-i18n="restart">RESTART</button>
+        <button id="btn-quit" class="btn btn-ghost" data-i18n="quit">QUIT</button>
+      </div>
+    </div>
+
+    <div id="screen-gameover" class="screen hidden">
+      <div class="panel">
+        <h2 data-i18n="game_over">GAME OVER</h2>
+        <div class="result-score">
+          <span class="label" data-i18n="score">Score</span>
+          <span id="final-score">0</span>
+        </div>
+        <div class="result-best">
+          <span data-i18n="best_score">Best</span>: <span id="final-best">0</span>
+        </div>
+        <button id="btn-retry" class="btn btn-primary" data-i18n="retry">RETRY</button>
+        <button id="btn-menu" class="btn btn-secondary" data-i18n="menu">MENU</button>
+      </div>
+    </div>
+
+    <div id="screen-loading" class="screen">
+      <div class="loading-content">
+        <div class="loading-snake"></div>
+        <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
+        <p id="loading-tip" data-i18n="loading">Loading Sector City...</p>
+      </div>
+    </div>
+
+    <div id="joystick-zone" class="joystick-zone hidden">
+      <div id="joystick-base" class="joystick-base">
+        <div id="joystick-knob" class="joystick-knob"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
