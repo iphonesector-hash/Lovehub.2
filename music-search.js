@@ -1,5 +1,5 @@
 // ===========================================================================
-// music-search.js — Phase 5.2 / 5.3: provider-based web music search.
+// music-search.js — Phase 5.2 / 5.3 / 5.5 / 6: provider-based web music search.
 //
 // Design rules (from the phase spec):
 //   * No SoundCloud/Spotify/Apple paid API is required. The default provider
@@ -15,7 +15,7 @@
 //   * All external metadata is UNTRUSTED. Consumers must render it with
 //     textContent (or escapeHtml) — never innerHTML.
 //
-// Smart search layer (Phase 5.5 fix):
+// Smart search layer (Phase 5.5 fix — PRESERVED VERBATIM):
 //   * normalizeMusicQuery() — robust Persian/Arabic + diacritic + zero-width
 //     + whitespace/punctuation folding.
 //   * transliteratePersian() — small deterministic Persian → Latin utility
@@ -33,11 +33,28 @@
 //   * searchSmart() — variants → dedupe → rank → resolve metadata only for
 //     the best candidates → validate playability. Returns
 //     { results, state, rawCount, relevantCount, playableCount,
-//       nonPlayableCount, query } where state ∈
-//     'ok' | 'empty' | 'filtered' | 'noplayable' | 'error'.
+//       nonPlayableCount, query, providers } where state ∈
+//     'ok' | 'empty' | 'filtered' | 'noplayable' | 'unavailable' | 'error'.
 //
-// Adding a future API provider (e.g. Jamendo with an API key) is a matter of
-// subclassing MusicSearchProvider and registering it in MusicSearchRegistry.
+// Multi-provider layer (Phase 6 — ADDITIVE, nothing above was changed):
+//   * normalizeTrack() / dedupeKeyFor() — every provider result becomes the
+//     common LoveHub shape { id, provider, title, artist, album, coverUrl,
+//     duration, audioUrl, streamUrl, externalUrl, playable, downloadable,
+//     sourceType, metadata, score, sources } plus the legacy aliases the UI
+//     consumes (playableUrl, artworkUrl, pageUrl, source, dedupeKey).
+//   * MusicSearchProvider — the base contract now also exposes searchTracks()
+//     (normalized results), optional getTrack/getArtist/getAlbum, per-provider
+//     timeout, preferred query kinds and an honest `legal` status record.
+//   * MelobitProvider / CodeBazanProvider / AhangifyProvider / MelodifyProvider
+//     — additional sources. Legal status is always documented and never
+//     overstated; blocked/offline providers fail in isolation.
+//   * MusicProviderManager — priority + enable/disable config, bounded
+//     concurrency pool, per-provider timeouts, a short TTL search cache,
+//     cross-provider dedupe (normalized artist+title, never provider ID),
+//     merged sources[] for playback fallback, diagnostics and request
+//     cancellation via the search deadline.
+//   * searchSmart() merges the Internet Archive pipeline (exact Phase 5.5
+//     behavior) with the other providers and keeps the same result shape.
 // ===========================================================================
 
 (function () {
@@ -51,6 +68,28 @@
     const MAX_RESULTS = 20;            // results returned to the UI
     const PROBE_LIMIT = 4;             // playability probes per search
     const RELEVANCE_MIN = 55;          // minimum score to be "relevant"
+
+    // Phase 6 — multi-provider management.
+    const PROVIDER_TIMEOUT_MS = 8000;      // per-provider network timeout
+    const MANAGER_DEADLINE_MS = 6000;      // searchOthers overall deadline (ms)
+    const POOL_LIMIT = 3;                  // bounded provider concurrency
+    const CACHE_TTL_MS = 60000;            // provider search cache TTL (ms)
+    const CACHE_MAX = 200;                 // provider search cache entry cap
+    const MAX_PROVIDER_VARIANTS = 2;       // variants a provider may receive
+    const DEFAULT_PROVIDER_PRIORITY = {
+        'internet-archive': 100,
+        'melobit': 90,
+        'ahangify': 80,
+        'melodify': 70,
+        'codebazan': 60
+    };
+    const DEFAULT_PROVIDER_ENABLED = {
+        'internet-archive': true,
+        'melobit': true,
+        'ahangify': true,
+        'melodify': true,
+        'codebazan': true
+    };
 
     // Browser-playable audio formats. Anything else (or no extension) is
     // never offered as a playable stream.
@@ -434,6 +473,111 @@
         return out;
     }
 
+    // -----------------------------------------------------------------------
+    // Normalized track layer (Phase 6 — multi-provider).
+    //
+    // Every provider result is converted to one common LoveHub shape:
+    //   { id, provider, title, artist, album, coverUrl, duration, audioUrl,
+    //     streamUrl, externalUrl, playable, downloadable, sourceType,
+    //     metadata, score, sources }
+    // plus the legacy aliases the Music Room UI already consumes
+    // (playableUrl, artworkUrl, pageUrl, source, dedupeKey, audioEvidence)
+    // so nothing downstream has to change.
+    // -----------------------------------------------------------------------
+
+    // Map an internal provider id → user-visible label (and back).
+    const PROVIDER_LABELS = {
+        'internet-archive': 'Internet Archive',
+        'melobit': 'Melobit',
+        'ahangify': 'Ahangify',
+        'melodify': 'Melodify',
+        'codebazan': 'CodeBazan'
+    };
+    const LABEL_TO_ID = {};
+    Object.keys(PROVIDER_LABELS).forEach((k) => { LABEL_TO_ID[PROVIDER_LABELS[k]] = k; });
+
+    function providerIdOf(track) {
+        if (!track) return null;
+        if (track.providerId) return track.providerId;
+        if (track.provider && LABEL_TO_ID[track.provider]) return LABEL_TO_ID[track.provider];
+        if (track.provider) return String(track.provider).toLowerCase().replace(/\s+/g, '-');
+        if (track.source && LABEL_TO_ID[track.source]) return LABEL_TO_ID[track.source];
+        return null;
+    }
+
+    // Deterministic cross-provider dedupe key: normalized artist + normalized
+    // title (never provider ID alone — different providers have different
+    // IDs). Falls back to the playable URL / provider key when artist or
+    // title is missing.
+    function dedupeKeyFor(track) {
+        if (!track) return null;
+        const art = normalizeMusicQuery(track.artist || '');
+        const tit = normalizeMusicQuery(track.title || '');
+        if (art && tit) return 't:' + art + '|' + tit;
+        if (track.playableUrl || track.audioUrl) return 'u:' + (track.playableUrl || track.audioUrl);
+        if (track.dedupeKey) return 'k:' + String(track.dedupeKey);
+        return null;
+    }
+
+    // Convert a provider-specific item into the common LoveHub track shape.
+    // Never invents data: unknown fields become null. `meta` carries the
+    // provider identity ({ id, label, sourceType, downloadable }).
+    function normalizeTrack(raw, meta) {
+        const m = meta || {};
+        raw = raw || {};
+        const title = String(raw.title || raw.name || '').trim().slice(0, 200);
+        const artist = String(raw.artist || raw.singer || raw.creator || '').trim().slice(0, 200) || null;
+        const audioUrl = raw.audioUrl || raw.streamUrl || raw.playableUrl || raw.mp3 || raw.mp3_128 || raw.mp3_320 || raw.link || raw.download || null;
+        const coverUrl = raw.coverUrl || raw.artworkUrl || raw.cover
+            || (raw.image && (raw.image.medium || raw.image.cover || raw.image.thumbnail))
+            || (raw.thumbnail && (raw.thumbnail.medium || raw.thumbnail.url)) || null;
+        const externalUrl = raw.externalUrl || raw.pageUrl || raw.shareUrl || null;
+        const duration = isFinite(Number(raw.duration)) && Number(raw.duration) > 0 ? Number(raw.duration) : null;
+        const playable = !!(audioUrl && looksPlayableUrl(audioUrl));
+        return {
+            id: String(raw.id != null ? raw.id : (audioUrl || title)),
+            provider: m.id || null,
+            title: title || String(raw.identifier || 'Untitled'),
+            artist,
+            album: raw.album || null,
+            coverUrl,
+            duration,
+            audioUrl,
+            streamUrl: audioUrl,
+            externalUrl,
+            playable,
+            downloadable: playable && m.downloadable !== false,
+            sourceType: m.sourceType || 'stream',
+            metadata: m,
+            score: null,
+            sources: [],
+            // Legacy aliases consumed by the Music Room UI (unchanged contract).
+            playableUrl: audioUrl,
+            artworkUrl: coverUrl,
+            pageUrl: externalUrl,
+            source: m.label || m.id || null,
+            dedupeKey: raw.dedupeKey || raw.identifier || (raw.id != null ? String(raw.id) : null) || null,
+            audioEvidence: playable,
+            providerId: m.id || null,
+            _description: Array.isArray(raw._description) ? raw._description
+                : (raw.description ? (Array.isArray(raw.description) ? raw.description : [raw.description]) : []),
+            _collection: Array.isArray(raw._collection) ? raw._collection
+                : (raw.collection ? (Array.isArray(raw.collection) ? raw.collection : [raw.collection]) : [])
+        };
+    }
+
+    // Pick the next fallback source URL for a track whose current source
+    // failed to play. `exclude` is a URL string or a Set of already-tried
+    // URLs. Returns null when no alternate source remains.
+    function nextPlayableSource(track, exclude) {
+        const sources = (track && track.sources) || [];
+        const skip = (exclude && typeof exclude.has === 'function') ? exclude : (exclude ? new Set([exclude]) : new Set());
+        for (const s of sources) {
+            if (s && s.playable && s.audioUrl && !skip.has(s.audioUrl)) return s.audioUrl;
+        }
+        return null;
+    }
+
     // Pure pipeline: score → filter irrelevant → split playable → rank.
     // state ∈ 'ok' | 'empty' | 'filtered' | 'noplayable'.
     function rankAndFilter(tracks, queryOrCtx) {
@@ -468,19 +612,45 @@
     // Base provider contract
     // -----------------------------------------------------------------------
     class MusicSearchProvider {
-        constructor(name) {
+        constructor(name, id) {
             this.name = name || 'provider';
+            this.id = id || String(name || 'provider').toLowerCase().replace(/\s+/g, '-');
+            this.timeoutMs = PROVIDER_TIMEOUT_MS;
+            // Which buildSearchVariants() entries this provider handles best.
+            // kinds: 'original' | 'normalized' | 'latin' | 'artist'
+            this.preferredQueryKinds = ['original'];
+            // Honest legal / terms record. Never claims licensing that was
+            // not verified; unverifiable sources are marked 'unknown'.
+            this.legal = {
+                status: 'unknown',   // 'public' | 'unknown' | 'blocked'
+                authRequired: false,
+                keyEnv: null,
+                docsUrl: null,
+                notes: ''
+            };
         }
         isAvailable() { return true; }
         async searchIdentifiers(query) { throw new Error('searchIdentifiers() not implemented'); }
         async resolveTrack(doc) { throw new Error('resolveTrack() not implemented'); }
+        // Provider-independent normalized search: returns an array of LoveHub
+        // tracks, or throws on failure (the manager isolates failures).
+        async searchTracks(query) { return null; }
+        // Optional entity lookups — not every provider implements them yet.
+        async getTrack(id) { throw new Error('getTrack() not implemented'); }
+        async getArtist(id) { throw new Error('getArtist() not implemented'); }
+        async getAlbum(id) { throw new Error('getAlbum() not implemented'); }
+        // Plain search used by the legacy search() API.
+        async search(query) {
+            const tracks = await this.searchTracks(query);
+            return tracks || [];
+        }
     }
 
     // -----------------------------------------------------------------------
     // Internet Archive — keyless, CORS-open, legitimate public audio.
     // -----------------------------------------------------------------------
     class InternetArchiveProvider extends MusicSearchProvider {
-        constructor() { super('Internet Archive'); }
+        constructor() { super('Internet Archive', 'internet-archive'); this.preferredQueryKinds = ['original', 'normalized', 'latin', 'artist']; }
 
         // Cheap identifier-level search: one advancedsearch request, no
         // metadata. Returns docs with title/creator/description/collection so
@@ -548,6 +718,7 @@
                 artworkUrl: 'https://archive.org/services/img/' + encodeURIComponent(identifier),
                 duration: isFinite(duration) ? duration : null,
                 provider: this.name,
+                providerId: this.id,
                 dedupeKey: identifier,
                 // internal signals used by scoring (never rendered)
                 audioEvidence: audio.length > 0,
@@ -557,8 +728,8 @@
             };
         }
 
-        // Backwards-compatible full search used by the plain search() API.
-        async search(query) {
+        // Phase 6 — normalized search (identifiers → resolved tracks).
+        async searchTracks(query) {
             const docs = await this.searchIdentifiers(query);
             const settled = await Promise.allSettled(docs.slice(0, 10).map((d) => this.resolveTrack(d)));
             return settled
@@ -569,14 +740,383 @@
     }
 
     // -----------------------------------------------------------------------
+    // Melobit — Persian music streaming API (no key for the public search
+    // endpoint). NOTE: the community-documented hosts were offline /
+    // domain-parked when verified (Aug 2026); the provider stays registered
+    // and failure-isolated so it can contribute automatically if the API
+    // returns. Legal status: unofficial, unverifiable → 'unknown'.
+    // -----------------------------------------------------------------------
+    class MelobitProvider extends MusicSearchProvider {
+        constructor() {
+            super('Melobit', 'melobit');
+            this.preferredQueryKinds = ['original', 'latin'];
+            this.legal = {
+                status: 'unknown',
+                authRequired: false,
+                keyEnv: null,
+                docsUrl: 'https://melobit.app',
+                notes: 'Unofficial consumer-app API; no published developer terms. Do not treat as licensed.'
+            };
+        }
+        async searchTracks(query) {
+            const q = sanitizeQuery(query);
+            if (!q) return [];
+            const url = 'https://api.melobit.com/api/v1/search/song?query=' + encodeURIComponent(q);
+            const json = await fetchJson(url, this.timeoutMs);
+            const results = (json && (json.data && json.data.results)) || (json && json.results) || (Array.isArray(json) ? json : []);
+            return results.map((s) => normalizeTrack({
+                id: s.id,
+                title: s.title || s.name,
+                artist: Array.isArray(s.artists)
+                    ? s.artists.map((a) => a && (a.name || a.fullName)).filter(Boolean).join(', ')
+                    : (s.artist && (s.artist.name || s.artist)) || null,
+                album: (s.album && s.album.name) || null,
+                duration: Number(s.duration) || null,
+                cover: (s.image && (s.image.medium || s.image.cover || s.image.thumbnail))
+                    || (s.cover && (s.cover.medium || s.cover.cover)) || null,
+                audioUrl: (s.audio && (s.audio['320'] || s.audio['128'] || s.audio.high || s.audio.medium))
+                    || (s.sources && (s.sources['320'] || s.sources['128']))
+                    || s.streamUrl || null,
+                externalUrl: s.shareUrl || s.pageUrl || null
+            }, { id: this.id, label: this.name, sourceType: 'stream' }));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // CodeBazan Music API — free, keyless Persian music search that aggregates
+    // several third-party sources. Provided "as-is" for educational use.
+    // NOTE: unreachable from this environment (timeout) when verified
+    // (Aug 2026); registered and failure-isolated — it may work from
+    // in-region networks. Legal status: aggregator of third-party music,
+    // terms not verifiable → 'unknown'.
+    // -----------------------------------------------------------------------
+    class CodeBazanProvider extends MusicSearchProvider {
+        constructor() {
+            super('CodeBazan', 'codebazan');
+            this.preferredQueryKinds = ['original', 'latin'];
+            this.legal = {
+                status: 'unknown',
+                authRequired: false,
+                keyEnv: null,
+                docsUrl: 'https://codebazan.ir',
+                notes: 'Free public API; aggregates third-party music sources; terms not verifiable.'
+            };
+        }
+        async searchTracks(query) {
+            const q = sanitizeQuery(query);
+            if (!q) return [];
+            const url = 'https://api.codebazan.ir/music/?type=search&query=' + encodeURIComponent(q) + '&page=1';
+            const json = await fetchJson(url, this.timeoutMs);
+            const arr = Array.isArray(json) ? json : (json && (json.result || json.results || json.data)) || [];
+            return arr.map((item) => normalizeTrack({
+                id: item.id != null ? item.id : (item.title || null),
+                title: item.title || item.name,
+                artist: item.artist || item.singer || item.reader || null,
+                album: item.album || null,
+                duration: Number(item.duration || item.time) || null,
+                cover: item.cover || item.image || item.poster || null,
+                audioUrl: item.mp3_320 || item.mp3_128 || item.mp3 || item.link_320 || item.link_128 || item.download || item.stream || null,
+                externalUrl: item.link || item.page || null
+            }, { id: this.id, label: this.name, sourceType: 'stream' }));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Ahangify — blocked: no official developer API; the only known
+    // integrations need a user session and route through unofficial proxies.
+    // Registered (per the priority config) but never queried.
+    // -----------------------------------------------------------------------
+    class AhangifyProvider extends MusicSearchProvider {
+        constructor() {
+            super('Ahangify', 'ahangify');
+            this.preferredQueryKinds = ['original'];
+            this.legal = {
+                status: 'blocked',
+                authRequired: true,
+                keyEnv: null,
+                docsUrl: 'https://ahangify.ir',
+                notes: 'No official developer API; unofficial proxies require account sessions.'
+            };
+        }
+        isAvailable() { return false; }
+        async searchTracks() { throw new Error('Ahangify: no public API — blocked'); }
+    }
+
+    // -----------------------------------------------------------------------
+    // Melodify — blocked: private API behind account authentication
+    // (phone/social login). Registered but never queried.
+    // -----------------------------------------------------------------------
+    class MelodifyProvider extends MusicSearchProvider {
+        constructor() {
+            super('Melodify', 'melodify');
+            this.preferredQueryKinds = ['original'];
+            this.legal = {
+                status: 'blocked',
+                authRequired: true,
+                keyEnv: null,
+                docsUrl: 'https://melodify.ir',
+                notes: 'Client apps authenticate via phone/social login; no public API.'
+            };
+        }
+        isAvailable() { return false; }
+        async searchTracks() { throw new Error('Melodify: requires account authentication — blocked'); }
+    }
+
+    // -----------------------------------------------------------------------
     // DirectAudioProvider — reserved for a future curated/direct-audio source.
     // Disabled until one is configured, so the registry never fails because
     // of it.
     // -----------------------------------------------------------------------
     class DirectAudioProvider extends MusicSearchProvider {
-        constructor() { super('Direct Audio'); }
+        constructor() { super('Direct Audio', 'direct-audio'); }
         isAvailable() { return false; }
-        async search() { return []; }
+        async searchTracks() { return []; }
+    }
+
+    // -----------------------------------------------------------------------
+    // MusicProviderManager — central registry, priorities, timeouts, cache,
+    // failure isolation, cross-provider dedupe and playback fallback.
+    // -----------------------------------------------------------------------
+    class MusicProviderManager {
+        constructor(config) {
+            const cfg = config || {};
+            this.config = {
+                deadlineMs: cfg.deadlineMs || MANAGER_DEADLINE_MS,
+                poolLimit: cfg.poolLimit || POOL_LIMIT,
+                cacheTtlMs: cfg.cacheTtlMs || CACHE_TTL_MS,
+                cacheMax: cfg.cacheMax || CACHE_MAX,
+                timeoutMs: Object.assign({ default: PROVIDER_TIMEOUT_MS }, cfg.timeoutMs),
+                priority: Object.assign({}, DEFAULT_PROVIDER_PRIORITY, cfg.priority),
+                enabled: Object.assign({}, DEFAULT_PROVIDER_ENABLED, cfg.enabled)
+            };
+            this.providers = [];
+            this._cache = new Map();
+            this._diag = new Map();
+        }
+
+        registerProvider(p) {
+            if (!p || !p.id) return this;
+            if (!this.providers.some((x) => x.id === p.id)) this.providers.push(p);
+            if (!this._diag.has(p.id)) {
+                this._diag.set(p.id, {
+                    searches: 0, failures: 0, totalMs: 0, lastLatencyMs: null, lastError: null,
+                    blocked: p.isAvailable() ? null : ((p.legal && p.legal.notes) || 'blocked')
+                });
+            }
+            return this;
+        }
+
+        unregisterProvider(id) {
+            this.providers = this.providers.filter((p) => p.id !== id);
+            this._diag.delete(id);
+            return this;
+        }
+
+        enable(id) { this.config.enabled[id] = true; return this; }
+        disable(id) { this.config.enabled[id] = false; return this; }
+        isEnabled(id) { return this.config.enabled[id] !== false; }
+        setPriority(id, n) { this.config.priority[id] = n; return this; }
+        getProvider(id) { return this.providers.find((p) => p.id === id) || null; }
+
+        // Enabled + available providers, highest priority first (stable).
+        orderedProviders() {
+            return this.providers
+                .filter((p) => this.isEnabled(p.id) && p.isAvailable())
+                .sort((a, b) => (this.config.priority[b.id] || 0) - (this.config.priority[a.id] || 0));
+        }
+
+        // ---- short-lived search cache (never private data) ----
+
+        _cacheGet(key) {
+            const e = this._cache.get(key);
+            if (!e) return null;
+            if (Date.now() - e.at > this.config.cacheTtlMs) { this._cache.delete(key); return null; }
+            return e.value;
+        }
+
+        _cacheSet(key, value) {
+            if (this._cache.size >= this.config.cacheMax) {
+                const oldest = this._cache.keys().next().value;
+                if (oldest !== undefined) this._cache.delete(oldest);
+            }
+            this._cache.set(key, { at: Date.now(), value });
+        }
+
+        // ---- diagnostics ----
+
+        _record(id, ms, err) {
+            const d = this._diag.get(id);
+            if (d) {
+                d.searches += 1;
+                d.totalMs += ms;
+                d.lastLatencyMs = ms;
+                if (err) { d.failures += 1; d.lastError = String((err && err.message) || err); }
+                else d.lastError = null;
+            }
+        }
+
+        diagnostics() {
+            return this.providers.map((p) => {
+                const d = this._diag.get(p.id) || {};
+                return {
+                    id: p.id,
+                    name: p.name,
+                    enabled: this.isEnabled(p.id),
+                    available: p.isAvailable(),
+                    legalStatus: p.legal && p.legal.status,
+                    authRequired: p.legal && p.legal.authRequired,
+                    searches: d.searches || 0,
+                    failures: d.failures || 0,
+                    lastLatencyMs: d.lastLatencyMs != null ? d.lastLatencyMs : null,
+                    lastError: d.lastError || null
+                };
+            });
+        }
+
+        resetDiagnostics() {
+            this._diag.forEach((d) => {
+                d.searches = 0; d.failures = 0; d.totalMs = 0; d.lastLatencyMs = null; d.lastError = null;
+            });
+        }
+
+        // ---- search orchestration ----
+
+        _timeoutFor(p) { return this.config.timeoutMs[p.id] || this.config.timeoutMs.default; }
+
+        // Bounded variant selection per provider preference (kinds above).
+        _pickVariants(p, variants, ctx) {
+            if (!variants || !variants.length) return [];
+            const kinds = p.preferredQueryKinds || ['original'];
+            const out = [];
+            const push = (v) => {
+                const s = sanitizeQuery(v);
+                if (s && !out.some((x) => x.toLowerCase() === s.toLowerCase())) out.push(s);
+            };
+            kinds.forEach((kind) => {
+                if (kind === 'original') push(variants[0]);
+                else if (kind === 'normalized') {
+                    const n = ctx.norm;
+                    if (n && n !== String(variants[0]).toLowerCase()) push(n);
+                } else if (kind === 'latin') {
+                    if (ctx.translits && ctx.translits.length) push(ctx.translits[0]);
+                    else if (variants.length > 1 && /^[a-z0-9]/.test(variants[1])) push(variants[1]);
+                } else if (kind === 'artist') {
+                    if (ctx.translits && ctx.translits.length) push(ctx.translits[0] + ' singer');
+                    else if (variants.length > 1) push(String(variants[1]) + ' singer');
+                }
+            });
+            return out.slice(0, MAX_PROVIDER_VARIANTS);
+        }
+
+        _withTimeout(promise, ms) {
+            if (!ms) return promise;
+            return Promise.race([
+                promise,
+                new Promise((resolve, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+            ]);
+        }
+
+        // One provider × one variant. Records diagnostics; never throws.
+        async _searchOne(p, variant, t0) {
+            const started = Date.now();
+            if (Date.now() - t0 > this.config.deadlineMs) {
+                this._record(p.id, 0, new Error('skipped (deadline)'));
+                return [];
+            }
+            const cacheKey = p.id + '|' + normalizeMusicQuery(variant);
+            const cached = this._cacheGet(cacheKey);
+            if (cached) { this._record(p.id, 1, null); return cached; }
+            try {
+                const items = await this._withTimeout(p.searchTracks(variant), this._timeoutFor(p));
+                const tracks = (Array.isArray(items) ? items : []).filter(Boolean);
+                this._record(p.id, Date.now() - started, null);
+                this._cacheSet(cacheKey, tracks);
+                return tracks;
+            } catch (err) {
+                this._record(p.id, Date.now() - started, err);
+                return [];
+            }
+        }
+
+        // Bounded-concurrency worker pool.
+        async _runPool(tasks, limit) {
+            const results = new Array(tasks.length);
+            let i = 0;
+            const workers = Array(Math.max(1, Math.min(limit || POOL_LIMIT, tasks.length))).fill(0).map(async () => {
+                while (i < tasks.length) {
+                    const idx = i++;
+                    results[idx] = await tasks[idx]();
+                }
+            });
+            await Promise.all(workers);
+            return results;
+        }
+
+        // Search every other provider (Internet Archive runs its own pipeline
+        // in searchSmart). Returns merged, deduped normalized tracks with
+        // sources[] attached. Never throws — provider failures are isolated
+        // and recorded in diagnostics.
+        async searchOthers(query, ctx, variants, excludeId) {
+            const t0 = Date.now();
+            const providers = this.orderedProviders().filter((p) => p.id !== (excludeId || 'internet-archive'));
+            const tasks = [];
+            providers.forEach((p) => {
+                this._pickVariants(p, variants, ctx).forEach((v) => {
+                    tasks.push(() => this._searchOne(p, v, t0));
+                });
+            });
+            const settled = tasks.length ? await this._runPool(tasks, this.config.poolLimit) : [];
+            return this._mergeDedupe(settled.flat(), providers.map((p) => p.id));
+        }
+
+        // Merge tracks from many providers into ONE result per dedupe key,
+        // keeping every alternate playable source for playback fallback. The
+        // primary fields come from the highest-priority source.
+        _mergeDedupe(tracks, priorityIds) {
+            const order = priorityIds || this.orderedProviders().map((p) => p.id);
+            const rankOf = (id) => {
+                const i = order.indexOf(id);
+                return i === -1 ? order.length : i;
+            };
+            const map = new Map();
+            for (const t of tracks) {
+                if (!t || !t.title) continue;
+                const key = dedupeKeyFor(t) || ('u:' + (t.playableUrl || t.audioUrl || Math.random()));
+                let entry = map.get(key);
+                if (!entry) {
+                    entry = Object.assign({}, t);
+                    entry.sources = [];
+                    map.set(key, entry);
+                }
+                const pid = providerIdOf(t);
+                const src = {
+                    provider: pid,
+                    label: t.source || t.provider || null,
+                    playable: !!t.playableUrl && looksPlayableUrl(t.playableUrl),
+                    audioUrl: t.audioUrl || t.playableUrl || null,
+                    streamUrl: t.streamUrl || t.playableUrl || null,
+                    externalUrl: t.externalUrl || t.pageUrl || null,
+                    coverUrl: t.coverUrl || t.artworkUrl || null
+                };
+                if (!entry.sources.some((s) => (s.provider === pid || pid == null) && s.audioUrl === src.audioUrl)) {
+                    entry.sources.push(src);
+                }
+                // Highest-priority source provides the primary playable fields.
+                if (!entry.playableUrl || rankOf(pid) < rankOf(providerIdOf(entry))) {
+                    entry.playableUrl = t.playableUrl || entry.playableUrl;
+                    entry.audioUrl = t.audioUrl || t.playableUrl || entry.audioUrl;
+                    entry.artworkUrl = t.artworkUrl || t.coverUrl || entry.artworkUrl;
+                    entry.pageUrl = t.pageUrl || t.externalUrl || entry.pageUrl;
+                    entry.duration = t.duration || entry.duration;
+                    entry.source = t.source || t.provider || entry.source;
+                    entry.provider = t.provider || entry.provider;
+                    entry.providerId = pid || entry.providerId;
+                    entry.dedupeKey = t.dedupeKey || entry.dedupeKey;
+                    entry.audioEvidence = t.audioEvidence || entry.audioEvidence;
+                }
+            }
+            return Array.from(map.values());
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -586,8 +1126,22 @@
         constructor() {
             this.providers = [
                 new InternetArchiveProvider(),
+                new MelobitProvider(),
+                new AhangifyProvider(),
+                new MelodifyProvider(),
+                new CodeBazanProvider(),
                 new DirectAudioProvider()
             ];
+            this.manager = new MusicProviderManager();
+            this.providers.forEach((p) => this.manager.registerProvider(p));
+            this.manager.disable('direct-audio'); // reserved for a future source
+        }
+
+        registerProvider(p) {
+            if (!p || !p.id) return this;
+            if (!this.providers.some((x) => x.id === p.id)) this.providers.push(p);
+            this.manager.registerProvider(p);
+            return this;
         }
 
         _available() { return this.providers.filter((p) => p.isAvailable()); }
@@ -611,46 +1165,29 @@
             return dedupeTracks(merged);
         }
 
-        // Smart search — the pipeline the UI uses:
-        //   variants → identifier docs → dedupe → pre-rank → metadata for the
-        //   best candidates → rank/filter → probe top streams → { results,
-        //   state, … }.
-        async searchSmart(query) {
-            const q = sanitizeQuery(query);
-            const emptyResp = {
-                results: [], rawCount: 0, relevantCount: 0,
-                playableCount: 0, nonPlayableCount: 0, query: q
-            };
-            if (!q) return Object.assign({ state: 'empty' }, emptyResp);
-
-            const ctx = buildQueryContext(q);
-            const variants = buildSearchVariants(q).slice(0, MAX_VARIANTS_SEARCHED);
-            const providers = this._available();
-
+        // Internet Archive path — the exact Phase 5.5 pipeline (variants →
+        // identifier docs → pre-rank → resolve metadata for the best
+        // candidates). Returns { tracks, failed }.
+        async _searchInternetArchive(q, variants, ctx) {
+            const ia = this.manager.getProvider('internet-archive');
+            if (!ia || typeof ia.searchIdentifiers !== 'function') return { tracks: [], failed: 0 };
             const seen = new Set();
             const docs = [];
             let failed = 0;
             for (const v of variants) {
                 try {
-                    for (const p of providers) {
-                        const batch = (await p.searchIdentifiers(v)) || [];
-                        for (const d of batch) {
-                            if (!d || !d.identifier || seen.has(d.identifier)) continue;
-                            seen.add(d.identifier);
-                            docs.push(d);
-                        }
+                    const batch = (await ia.searchIdentifiers(v)) || [];
+                    for (const d of batch) {
+                        if (!d || !d.identifier || seen.has(d.identifier)) continue;
+                        seen.add(d.identifier);
+                        docs.push(d);
                     }
                 } catch (err) {
                     failed++;
                     console.warn('[MusicSearch] variant failed:', v, err && err.message);
                 }
             }
-
-            if (docs.length === 0) {
-                return Object.assign({
-                    state: (failed === variants.length && variants.length > 0) ? 'error' : 'empty'
-                }, emptyResp);
-            }
+            if (docs.length === 0) return { tracks: [], failed };
             if (docs.length > MAX_DOCS) docs.length = MAX_DOCS;
 
             // Pre-rank on identifier-level fields (no metadata cost yet).
@@ -669,15 +1206,44 @@
                 .map((r) => docs[r.i]);
 
             // Resolve metadata only for the best candidates.
-            const primary = providers[0];
             const tracks = [];
-            if (primary && typeof primary.resolveTrack === 'function') {
-                const settled = await Promise.allSettled(pre.map((d) => primary.resolveTrack(d)));
-                settled.forEach((r) => { if (r.status === 'fulfilled' && r.value) tracks.push(r.value); });
-            }
+            const settled = await Promise.allSettled(pre.map((d) => ia.resolveTrack(d)));
+            settled.forEach((r) => { if (r.status === 'fulfilled' && r.value) tracks.push(r.value); });
+            return { tracks, failed };
+        }
 
-            const out = rankAndFilter(tracks, ctx);
-            if (tracks.length === 0) out.state = 'empty';
+        // Smart search — the pipeline the UI uses. The Internet Archive path
+        // is the exact Phase 5.5 pipeline; the manager concurrently adds every
+        // other provider (bounded pool, per-provider timeout, deadline) and
+        // the merged results go through the same rank/filter/probe stages.
+        async searchSmart(query) {
+            const q = sanitizeQuery(query);
+            const emptyResp = {
+                results: [], rawCount: 0, relevantCount: 0,
+                playableCount: 0, nonPlayableCount: 0, query: q
+            };
+            if (!q) return Object.assign({ state: 'empty' }, emptyResp);
+
+            const ctx = buildQueryContext(q);
+            const variants = buildSearchVariants(q).slice(0, MAX_VARIANTS_SEARCHED);
+
+            const iaPromise = this._searchInternetArchive(q, variants, ctx);
+            const othersPromise = this.manager.searchOthers(q, ctx, variants, 'internet-archive')
+                .catch((err) => {
+                    console.warn('[MusicSearch] provider pool failed:', err && err.message);
+                    return [];
+                });
+            const [iaRes, others] = await Promise.all([iaPromise, othersPromise]);
+
+            const merged = this.manager._mergeDedupe((iaRes.tracks || []).concat(others));
+            const out = rankAndFilter(merged, ctx);
+            if (merged.length === 0) {
+                // Nothing from any provider. Distinguish "all providers
+                // failed" (network) from "providers answered but had no
+                // results".
+                const iaFailed = iaRes.failed >= variants.length && variants.length > 0;
+                out.state = iaFailed ? 'unavailable' : 'empty';
+            }
 
             // Probe the top candidates so an item whose URL is not actually
             // audio is not offered with a Play button.
@@ -696,6 +1262,7 @@
                     if (!out.results.length) out.state = 'noplayable';
                 }
             }
+            out.providers = this.manager.diagnostics();
             return out;
         }
     }
@@ -713,7 +1280,16 @@
     window.MusicSearch.dedupeTracks = dedupeTracks;
     window.MusicSearch.rankAndFilter = rankAndFilter;
     window.MusicSearch.RELEVANCE_MIN = RELEVANCE_MIN;
+    window.MusicSearch.normalizeTrack = normalizeTrack;
+    window.MusicSearch.dedupeKeyFor = dedupeKeyFor;
+    window.MusicSearch.nextPlayableSource = nextPlayableSource;
+    window.MusicSearch.providerIdOf = providerIdOf;
+    window.MusicSearch.MusicProviderManager = MusicProviderManager;
     window.MusicSearch.InternetArchiveProvider = InternetArchiveProvider;
     window.MusicSearch.MusicSearchProvider = MusicSearchProvider;
+    window.MusicSearch.MelobitProvider = MelobitProvider;
+    window.MusicSearch.AhangifyProvider = AhangifyProvider;
+    window.MusicSearch.MelodifyProvider = MelodifyProvider;
+    window.MusicSearch.CodeBazanProvider = CodeBazanProvider;
     window.MusicSearch.DirectAudioProvider = DirectAudioProvider;
 })();

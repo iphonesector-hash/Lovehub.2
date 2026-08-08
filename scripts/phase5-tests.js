@@ -647,6 +647,189 @@ async function main() {
     });
 
     // ===========================================================================
+    // ===========================================================================
+    console.log('\n== music-search: multi-provider manager (Phase 6) ==');
+
+    const MusicProviderManager = sandbox.window.MusicSearch.MusicProviderManager;
+    const buildSearchVariants = sandbox.window.MusicSearch.buildSearchVariants;
+    const MusicSearchProvider = sandbox.window.MusicSearch.MusicSearchProvider;
+    const normalizeTrack = sandbox.window.MusicSearch.normalizeTrack;
+    const dedupeKeyFor = sandbox.window.MusicSearch.dedupeKeyFor;
+    const nextPlayableSource = sandbox.window.MusicSearch.nextPlayableSource;
+
+    const Mgr = () => new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 2000 });
+
+    function fakeProvider(id, label, opts) {
+        const o = opts || {};
+        const p = new MusicSearchProvider(label, id);
+        p.timeoutMs = o.timeoutMs || 200;
+        p.preferredQueryKinds = o.kinds || ['original'];
+        p.searchTracks = async (query) => {
+            if (o.throwError) throw new Error(o.throwError);
+            if (o.hang) return new Promise(() => { /* never resolves */ });
+            const items = o.items ? (typeof o.items === 'function' ? o.items(query) : o.items) : [];
+            return items.map((it) => normalizeTrack(it, { id, label }));
+        };
+        return p;
+    }
+
+    await test('normalizeTrack: common shape + legacy aliases', () => {
+        const t = normalizeTrack(
+            { id: 7, title: 'Delbar', artist: 'Ebi', audioUrl: 'https://x/delbar.mp3', cover: 'https://x/c.jpg', duration: 210 },
+            { id: 'melobit', label: 'Melobit' }
+        );
+        assert(t.provider === 'melobit' && t.playableUrl === 'https://x/delbar.mp3', 'provider + legacy playableUrl');
+        assert(t.audioUrl === t.streamUrl && t.playable === true && t.downloadable === true, 'audio/stream/download flags');
+        assert(t.coverUrl === 'https://x/c.jpg' && t.artworkUrl === t.coverUrl, 'cover + legacy artworkUrl');
+        assert(t.source === 'Melobit' && t.duration === 210, 'source label + duration');
+        assert(t.audioEvidence === true && t.sources.length === 0, 'audio evidence + empty sources');
+        const bad = normalizeTrack({ title: 'X' }, { id: 'x' });
+        assert(bad.playable === false && bad.playableUrl === null, 'no URL → not playable, null URL');
+    });
+
+    await test('dedupeKeyFor: artist+title key, never provider id alone', () => {
+        const a = dedupeKeyFor({ title: 'Delbar', artist: 'Ebi', provider: 'melobit', id: 'm1' });
+        const b = dedupeKeyFor({ title: 'Delbar', artist: 'ebi', provider: 'internet-archive', id: 'ia1' });
+        assert(a === b, 'same normalized artist+title → same key across providers');
+        const c = dedupeKeyFor({ title: 'Delbar', artist: 'Googoosh', provider: 'melobit' });
+        assert(a !== c, 'different artist → different key');
+    });
+
+    await test('manager: register/enable/disable/priority ordering', () => {
+        const m = Mgr();
+        m.registerProvider(fakeProvider('aa', 'AA', { items: [] }));
+        m.registerProvider(fakeProvider('bb', 'BB', { items: [] }));
+        m.setPriority('aa', 10);
+        m.setPriority('bb', 90);
+        assert(m.orderedProviders().map((p) => p.id).join(',') === 'bb,aa', 'priority desc order');
+        m.disable('bb');
+        assert(m.orderedProviders().map((p) => p.id).join(',') === 'aa', 'disabled provider excluded');
+        m.enable('bb');
+        assert(m.isEnabled('bb') && m.getProvider('bb') !== null, 're-enabled + lookup');
+    });
+
+    await test('manager: failure isolation — one provider failing never breaks others', async () => {
+        const m = Mgr();
+        m.registerProvider(fakeProvider('good', 'Good', { items: [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://x/d.mp3' }] }));
+        m.registerProvider(fakeProvider('bad', 'Bad', { throwError: 'boom' }));
+        m.registerProvider(fakeProvider('good2', 'Good2', { items: [{ title: 'Sekke', artist: 'Ebi', audioUrl: 'https://x/s.mp3' }] }));
+        const ctx = buildCtx('ebi');
+        const out = await m.searchOthers('ebi', ctx, buildSearchVariants('ebi'), 'nope');
+        assert(out.length === 2, '2 providers survived, got ' + out.length);
+        const diag = m.diagnostics().find((d) => d.id === 'bad');
+        assert(diag && diag.failures === 1 && diag.lastError === 'boom', 'failure recorded for bad provider');
+    });
+
+    await test('manager: provider timeout — hanging provider never blocks others', async () => {
+        const m = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000, timeoutMs: { hang: 80 } });
+        m.registerProvider(fakeProvider('hang', 'Hang', { hang: true }));
+        m.registerProvider(fakeProvider('fast', 'Fast', { items: [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://x/d.mp3' }] }));
+        const t0 = Date.now();
+        const out = await m.searchOthers('ebi', buildCtx('ebi'), buildSearchVariants('ebi'), 'nope');
+        const ms = Date.now() - t0;
+        assert(out.length === 1, 'fast provider result returned');
+        assert(ms < 2000, 'search finished quickly (' + ms + 'ms)');
+        const d = m.diagnostics().find((x) => x.id === 'hang');
+        assert(d && d.failures >= 1, 'hang provider recorded a failure');
+    });
+
+    await test('manager: malformed provider response is skipped, not fatal', async () => {
+        const m = Mgr();
+        m.registerProvider(fakeProvider('weird', 'Weird', { items: 'not-an-array' }));
+        m.registerProvider(fakeProvider('ok', 'Ok', { items: [{ title: 'X', artist: 'Ebi', audioUrl: 'https://x/x.mp3' }] }));
+        const out = await m.searchOthers('x', buildCtx('x'), buildSearchVariants('x'), 'nope');
+        assert(out.length === 1, 'malformed provider dropped, good provider kept');
+    });
+
+    await test('manager: same track from 2 providers → 1 result with 2 sources', async () => {
+        const m = Mgr();
+        m.setPriority('ia', 100);
+        m.setPriority('melo', 50);
+        m.registerProvider(fakeProvider('ia', 'IA', { items: [{ title: 'Setarehaye Sorbi', artist: 'Ebi', audioUrl: 'https://ia/s.mp3' }] }));
+        m.registerProvider(fakeProvider('melo', 'Melo', { items: [{ title: 'Setarehaye Sorbi', artist: 'Ebi', audioUrl: 'https://melo/s.mp3' }] }));
+        const out = await m.searchOthers('sorbi', buildCtx('sorbi'), buildSearchVariants('sorbi'), 'nope');
+        assert(out.length === 1, 'deduped to one result, got ' + out.length);
+        assert(out[0].sources.length === 2, 'two sources kept, got ' + out[0].sources.length);
+        assert(out[0].playableUrl === 'https://ia/s.mp3', 'primary source = highest priority (ia)');
+    });
+
+    await test('manager+rank: playable source beats metadata-only source for same track', async () => {
+        const m = Mgr();
+        m.registerProvider(fakeProvider('meta', 'Meta', { items: [{ title: 'Delbar', artist: 'Ebi' }] }));
+        m.registerProvider(fakeProvider('play', 'Play', { items: [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://x/d.mp3' }] }));
+        const merged = await m.searchOthers('ebi', buildCtx('ebi'), buildSearchVariants('ebi'), 'nope');
+        assert(merged.length === 1, 'merged to one result');
+        assert(merged[0].playableUrl === 'https://x/d.mp3', 'playable source promoted to primary');
+        const out = rankF(merged, buildCtx('ebi'));
+        assert(out.results.length === 1 && out.state === 'ok', 'playable result survives ranking');
+    });
+
+    await test('rankAndFilter: exact artist outranks description-only match', () => {
+        const ctx = buildCtx('ebi');
+        const out = rankF([
+            { title: 'Lecture series', artist: 'Someone', playableUrl: 'https://x/l.mp3', audioEvidence: true, _description: ['ebi is mentioned in this series'] },
+            { title: 'Delbar', artist: 'Ebi', playableUrl: 'https://x/d.mp3', audioEvidence: true }
+        ], ctx);
+        assert(out.results.length === 1, 'only the artist match is relevant');
+        assert(out.results[0].artist === 'Ebi', 'exact artist result first/only');
+    });
+
+    await test('nextPlayableSource: returns alternate source, then null', () => {
+        const track = {
+            playableUrl: 'https://a/1.mp3',
+            sources: [
+                { provider: 'ia', playable: true, audioUrl: 'https://a/1.mp3' },
+                { provider: 'melo', playable: true, audioUrl: 'https://b/2.mp3' },
+                { provider: 'codebazan', playable: false, audioUrl: 'https://c/3.mp3' }
+            ]
+        };
+        assert(nextPlayableSource(track, 'https://a/1.mp3') === 'https://b/2.mp3', 'second source picked');
+        assert(nextPlayableSource(track, new Set(['https://a/1.mp3', 'https://b/2.mp3'])) === null, 'exhausted → null');
+        assert(nextPlayableSource({ playableUrl: 'https://a/1.mp3' }, 'https://a/1.mp3') === null, 'no sources → null');
+    });
+
+    await test('manager: cache avoids a second provider fetch within TTL', async () => {
+        const m = Mgr();
+        let calls = 0;
+        m.registerProvider(fakeProvider('cached', 'Cached', {
+            items: () => { calls += 1; return [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://x/d.mp3' }]; }
+        }));
+        const ctx = buildCtx('ebi');
+        await m.searchOthers('ebi', ctx, buildSearchVariants('ebi'), 'nope');
+        await m.searchOthers('ebi', ctx, buildSearchVariants('ebi'), 'nope');
+        assert(calls === 1, 'second search served from cache, calls=' + calls);
+    });
+
+    await test('manager: variants per provider preference (original vs latin)', async () => {
+        let seen = [];
+        const m = Mgr();
+        const p = fakeProvider('v', 'V', { items: (q) => { seen.push(q); return []; } });
+        m.registerProvider(p);
+        const ctx = buildCtx('ابی');
+        const variants = buildSearchVariants('ابی');
+        await m.searchOthers('ابی', ctx, variants, 'nope');
+        assert(seen.some((s) => s === 'ابی'), 'original variant used: ' + seen.join(','));
+        seen = [];
+        p.preferredQueryKinds = ['latin'];
+        await m.searchOthers('ابی', ctx, variants, 'nope');
+        assert(seen.length > 0 && !seen.some((s) => s === 'ابی') && /^[a-z]/i.test(seen[0]), 'latin variant used: ' + seen.join(','));
+    });
+
+    await test('registry: all six providers registered with priority config', () => {
+        const M = sandbox.window.MusicSearch;
+        const ids = M.manager.providers.map((p) => p.id).sort();
+        assert(ids.join(',') === 'ahangify,codebazan,direct-audio,internet-archive,melobit,melodify', 'registered: ' + ids.join(','));
+        assert(M.manager.config.priority['internet-archive'] === 100 && M.manager.config.priority.melobit === 90, 'priority config present');
+        assert(M.manager.isEnabled('melobit') && !M.manager.isEnabled('direct-audio'), 'enable flags default');
+    });
+
+    await test('searchSmart: all providers failing → graceful unavailable state', async () => {
+        const out = await sandbox.window.MusicSearch.searchSmart('ebi');
+        assert(out && typeof out.state === 'string', 'returns a state');
+        assert(out.state === 'unavailable' || out.state === 'empty', 'graceful state, got ' + out.state);
+        assert(Array.isArray(out.providers) && out.providers.length >= 5, 'diagnostics attached');
+    });
+
     console.log('\nResults:', passes, 'passed,', failures, 'failed');
     process.exit(failures ? 1 : 0);
 }

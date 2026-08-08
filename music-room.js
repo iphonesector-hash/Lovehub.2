@@ -723,6 +723,8 @@
                     : 'No good matches found — try another spelling, artist, or song name.';
             } else if (kind === 'noplayable') {
                 p.textContent = 'No playable results found — try a different query.';
+            } else if (kind === 'unavailable') {
+                p.textContent = 'Music search is temporarily unavailable. Please try again.';
             } else if (kind === 'error') {
                 p.textContent = 'Search failed — check your connection.';
                 const retry = el('button', 'music-retry', 'Retry');
@@ -1150,6 +1152,7 @@
             const p = this.player;
             p.on('state', () => { this._renderHero(); this._renderQueue(); this._renderNowPlaying(); this._updateMiniPlayer(); if (this.visualizer) this.visualizer.setPlaying(p.playing && !!p.current); });
             p.on('track', (s) => {
+                this._fallbackTriedUrls = new Set();
                 this._renderHero();
                 this._renderNowPlaying();
                 this._updateMiniPlayer();
@@ -1168,13 +1171,35 @@
                 this._maybeSaveContinue();
             });
             p.on('error', (e) => {
-                this.showToast((e && e.message) || 'Playback failed');
+                const fellBack = this._playbackFallback();
+                if (!fellBack) this.showToast((e && e.message) || 'Playback failed');
                 this._renderHero();
                 this._renderNowPlaying();
             });
             p.on('end', () => {
                 this._sleepEndSongIfSet();
             });
+        }
+
+        // Phase 6 — multi-source playback fallback: when a track fails to
+        // play from one provider's source, try the next playable source the
+        // provider manager attached (sources[]), up to a few attempts.
+        _playbackFallback() {
+            const p = this.player;
+            const t = p.current;
+            if (!t || !p.retry) return false;
+            if (!this._fallbackTriedUrls) this._fallbackTriedUrls = new Set();
+            if (this._fallbackTriedUrls.size === 0 && t.playableUrl) this._fallbackTriedUrls.add(t.playableUrl);
+            if (this._fallbackTriedUrls.size >= 3) return false;
+            const next = (window.MusicSearch && window.MusicSearch.nextPlayableSource)
+                ? window.MusicSearch.nextPlayableSource(t, this._fallbackTriedUrls)
+                : null;
+            if (!next) return false;
+            this._fallbackTriedUrls.add(next);
+            t.playableUrl = next;
+            t.audioUrl = next;
+            p.retry();
+            return true;
         }
 
         _maybeSaveContinue() {
