@@ -1477,6 +1477,9 @@ async function main() {
             assert(t.playable === true && t.playableUrl === t.audioUrl, 'playable via stream endpoint');
             assert(t.sourceType === 'stream' && t.downloadable === false, 'sourceType + not downloadable');
             assert(t.metadata.audiusId === 'l5vpN' && t.metadata.genre === 'Pop' && t.metadata.playCount === 1106, 'original metadata preserved');
+            assert(t.metadata.audius && t.metadata.audius.trackId === 'l5vpN', 'nested metadata.audius present');
+            assert(t.metadata.audius.genre === 'Pop' && t.metadata.audius.playCount === 1106, 'nested metadata.audius values');
+            assert(t.metadata.audius.userId === '1glZr' && t.metadata.audius.permalink === 'ebi-nazi-naz-kon-concert', 'nested userId + permalink');
             assert(t.metadata.artist_farsi === null && t.metadata.song_farsi === null, 'no invented Farsi fields');
         } finally { sandbox.fetch = realFetch; }
     });

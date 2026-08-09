@@ -1098,6 +1098,17 @@
                     artist_farsi: null,
                     song_farsi: null
                 });
+                // Phase 11B — nested Audius-specific metadata (flat keys above
+                // stay for backward compatibility). Null when unavailable.
+                t.metadata.audius = {
+                    trackId: id,
+                    userId: (s.user && s.user.id != null) ? String(s.user.id) : null,
+                    permalink: s.permalink || s.slug || null,
+                    artwork: cover,
+                    genre: s.genre || null,
+                    releaseDate: s.release_date || null,
+                    playCount: s.play_count != null ? s.play_count : null
+                };
             }
             return t;
         }
