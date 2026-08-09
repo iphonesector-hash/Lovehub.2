@@ -51,9 +51,12 @@ const CHANNELS = [
     'Ebi_lover_forever'
 ];
 
-// Bounded run so every search is small, cheap and fast.
-const MAX_POSTS_PER_CHANNEL = 1;
-const MAX_ITEMS = 12;
+// Bounded run so every search is small, cheap and fast. A few posts per
+// channel are needed: the actor returns the first `searchQuery`-matching
+// post per channel, and with only 1 the first match is often a cover photo
+// rather than an audio file.
+const MAX_POSTS_PER_CHANNEL = 3;
+const MAX_ITEMS = 16;
 
 // Safe CORS allowlist — only these origins may read the relay response.
 const ALLOWED_ORIGINS = [
