@@ -815,12 +815,12 @@ async function main() {
         assert(seen.length > 0 && !seen.some((s) => s === 'ابی') && /^[a-z]/i.test(seen[0]), 'latin variant used: ' + seen.join(','));
     });
 
-    await test('registry: all seven providers registered with priority config', () => {
+    await test('registry: all nine providers registered with priority config', () => {
         const M = sandbox.window.MusicSearch;
         const ids = M.manager.providers.map((p) => p.id).sort();
-        assert(ids.join(',') === 'ahangify,audius,codebazan,codebazan-rjavan,direct-audio,internet-archive,melobit,melodify', 'registered: ' + ids.join(','));
-        assert(M.manager.config.priority['codebazan-rjavan'] === 110 && M.manager.config.priority['internet-archive'] === 100 && M.manager.config.priority.melobit === 90, 'priority config present');
-        assert(M.manager.isEnabled('codebazan-rjavan') && M.manager.isEnabled('melobit') && !M.manager.isEnabled('direct-audio'), 'enable flags default');
+        assert(ids.join(',') === 'ahangify,audius,codebazan,codebazan-rjavan,deezer,direct-audio,internet-archive,melobit,melodify,youtube', 'registered: ' + ids.join(','));
+        assert(M.manager.config.priority['codebazan-rjavan'] === 110 && M.manager.config.priority['internet-archive'] === 100 && M.manager.config.priority.melobit === 90 && M.manager.config.priority.deezer === 98 && M.manager.config.priority.youtube === 95, 'priority config present');
+        assert(M.manager.isEnabled('codebazan-rjavan') && M.manager.isEnabled('melobit') && M.manager.isEnabled('deezer') && M.manager.isEnabled('youtube') && !M.manager.isEnabled('direct-audio'), 'enable flags default');
     });
 
     await test('searchSmart: all providers failing → graceful unavailable state', async () => {
@@ -1590,6 +1590,198 @@ async function main() {
         const unrelated = { title: 'Some Upload', artist: 'Unknown Artist', playableUrl: 'https://api.audius.co/v1/tracks/zzz/stream', audioEvidence: true };
         const s = scoreT(unrelated, ctx);
         assert(s.score < sandbox.window.MusicSearch.RELEVANCE_MIN, 'unrelated below threshold (' + s.score + ')');
+    });
+
+
+    console.log('\n== Phase 12: Deezer + YouTube providers ==');
+
+    const DeezerProvider = sandbox.window.MusicSearch.DeezerProvider;
+    const YouTubeProvider = sandbox.window.MusicSearch.YouTubeProvider;
+
+    const deezerSample = {
+        id: 10875561,
+        title: 'Harighe Sabz',
+        duration: 316,
+        rank: 969981,
+        explicit_lyrics: false,
+        link: 'https://www.deezer.com/track/10875561',
+        preview: 'https://cdns-preview-0.dzcdn.net/stream/c-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e-0.mp3',
+        artist: { id: 1804437, name: 'Ebi' },
+        album: { id: 199825222, title: 'Harighe Sabz', cover_medium: 'https://e-cdns-images.dzcdn.net/images/cover/abc/250x250-000000-80-0-0.jpg' }
+    };
+
+    const youtubeSample = {
+        videoId: 'AbC123xyz',
+        title: 'Ebi - Hamin Khoobe (Official Video)',
+        channelId: 'UCabc',
+        channelTitle: 'Ebi Official',
+        publishedAt: '2020-01-01T00:00:00Z',
+        thumbnail: 'https://i.ytimg.com/vi/AbC123xyz/hqdefault.jpg',
+        kind: 'youtube#video'
+    };
+
+    await test('deezer: provider registered, id=deezer, priority 98, label Deezer', () => {
+        assert(typeof DeezerProvider === 'function', 'DeezerProvider class exported');
+        const M = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000 });
+        M.registerProvider(new DeezerProvider());
+        assert(M.config.priority.deezer === 98, 'deezer priority 98, got ' + M.config.priority.deezer);
+        assert(M.config.priority['internet-archive'] > M.config.priority.deezer, 'IA 100 > deezer 98 (preview never outranks full-track)');
+        assert(M.config.priority.deezer > M.config.priority.melobit, 'deezer 98 > melobit 90');
+        assert(M.isEnabled('deezer'), 'deezer enabled');
+        const p = new DeezerProvider();
+        assert(p.id === 'deezer' && p.name === 'Deezer', 'id + label');
+        assert(p.legal && p.legal.authRequired === false && !p.legal.keyEnv, 'keyless, no secret');
+    });
+
+    await test('deezer: relay URL — same-origin /api/deezer with query+limit, never api.deezer.com directly', async () => {
+        const prev = sandbox.fetch;
+        let seen = null;
+        sandbox.fetch = (url) => { seen = String(url); return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ data: [] }) }); };
+        try {
+            await new DeezerProvider().searchTracks('Ebi');
+            assert(seen && seen.indexOf('/api/deezer?query=') !== -1 && seen.indexOf('limit=50') !== -1, 'deezer relay URL, got ' + seen);
+            assert(seen.indexOf('api.deezer.com') === -1, 'browser never calls api.deezer.com directly (CORS)');
+        } finally { sandbox.fetch = prev; }
+    });
+
+    await test('deezer: normalization — preview mp3 becomes playable preview track', () => {
+        const t = new DeezerProvider()._toTrack(deezerSample);
+        assert(t, 'normalized');
+        assert(t.provider === 'deezer' && t.providerId === 'deezer', 'provider ids');
+        assert(t.title === 'Harighe Sabz' && t.artist === 'Ebi' && t.album === 'Harighe Sabz', 'title/artist/album');
+        assert(t.duration === 316, 'duration');
+        assert(t.coverUrl === deezerSample.album.cover_medium, 'cover');
+        assert(t.audioUrl === deezerSample.preview && t.streamUrl === deezerSample.preview, 'audio = provider preview URL');
+        assert(t.playable === true, 'preview is browser-playable');
+        assert(t.sourceType === 'preview', 'sourceType preview, got ' + t.sourceType);
+        assert(t.downloadable === false, 'not downloadable');
+        assert(t.metadata.deezer.trackId === '10875561' && t.metadata.deezer.playbackMode === 'html5-audio', 'nested metadata');
+        assert(t.audioUrl.indexOf('dzcdn.net') !== -1, 'audio stays on provider CDN');
+    });
+
+    await test('deezer: Persian query ابی flows through variant system', () => {
+        const p = new DeezerProvider();
+        const kinds = p.preferredQueryKinds || [];
+        assert(kinds.indexOf('original') !== -1 && kinds.indexOf('normalized') !== -1 && kinds.indexOf('latin') !== -1, 'kinds: ' + kinds.join(','));
+        const variants = buildSearchVariants('ابی');
+        assert(variants.length >= 2, 'Persian query yields variants: ' + JSON.stringify(variants));
+    });
+
+    await test('deezer: failure isolation — deezer 500 does not break rjavan', async () => {
+        const prev = sandbox.fetch;
+        sandbox.fetch = (url, init) => {
+            const u = String(url);
+            if (u.indexOf('/api/deezer') !== -1) return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) });
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ mp3s: [{ id: '1', title: 'Hamin Khoobe', artist: 'Ebi', link: 'https://host1.media-rj.com/media/mp3/mp3-256/52642-becdc8d090175a7.mp3', duration: 240 }] }) });
+        };
+        try {
+            const M = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000 });
+            M.registerProvider(new CodeBazanRjavanProvider());
+            M.registerProvider(new DeezerProvider());
+            const ctx = buildCtx('Ebi');
+            const variants = buildSearchVariants('Ebi').slice(0, 3);
+            const out = await M.searchOthers('Ebi', ctx, variants, 'nope');
+            assert(Array.isArray(out) && out.length >= 1, 'rjavan results survive deezer 500');
+            const diag = M.diagnostics().find((d) => d.id === 'deezer');
+            assert(diag && diag.failures >= 1, 'deezer failure recorded');
+        } finally { sandbox.fetch = prev; }
+    });
+
+    await test('deezer: dedupe — rjavan + deezer same song merges, rjavan primary, preview kept in sources', () => {
+        const MS = sandbox.window.MusicSearch;
+        const dz = { title: 'Hamin Khoobe', artist: 'Ebi', provider: 'deezer', playableUrl: 'https://cdns-preview-0.dzcdn.net/stream/c-x.mp3', audioEvidence: true };
+        const rj = { title: 'Hamin Khoobe', artist: 'Ebi', provider: 'codebazan-rjavan', playableUrl: 'https://host1.media-rj.com/media/mp3/mp3-256/52642-becdc8d090175a7.mp3', audioEvidence: true };
+        assert(MS.dedupeKeyFor(dz) === MS.dedupeKeyFor(rj), 'same normalized artist|title key');
+        const merged = MS.manager._mergeDedupe([rj, dz], ['codebazan-rjavan', 'deezer']);
+        assert(merged.length === 1, 'one result after dedupe');
+        assert(merged[0].sources.length === 2, 'both playable sources kept');
+        const out = rankF(merged, buildCtx('hamin khoobe'));
+        assert(out.results.length === 1, 'one ranked result');
+        const r = out.results[0];
+        const prov = (r.sources && r.sources[0] && r.sources[0].provider) || r.provider;
+        assert(prov === 'codebazan-rjavan', 'rjavan primary over deezer preview');
+    });
+
+    await test('deezer: playback fallback — rjavan fails → deezer preview tried → IA (3-attempt cap)', () => {
+        const track = {
+            playableUrl: 'https://host1.media-rj.com/media/mp3/mp3-256/52642-becdc8d090175a7.mp3',
+            sources: [
+                { provider: 'codebazan-rjavan', playable: true, audioUrl: 'https://host1.media-rj.com/media/mp3/mp3-256/52642-becdc8d090175a7.mp3' },
+                { provider: 'deezer', playable: true, audioUrl: 'https://cdns-preview-0.dzcdn.net/stream/c-x.mp3' },
+                { provider: 'internet-archive', playable: true, audioUrl: 'https://ia/d.mp3' }
+            ]
+        };
+        const NPS = sandbox.window.MusicSearch.nextPlayableSource;
+        const n1 = NPS(track, track.playableUrl);
+        assert(n1 === 'https://cdns-preview-0.dzcdn.net/stream/c-x.mp3', 'deezer preview tried after rjavan');
+        const n2 = NPS(track, new Set([track.playableUrl, n1]));
+        assert(n2 === 'https://ia/d.mp3', 'IA tried after deezer');
+        assert(NPS(track, new Set([track.playableUrl, n1, n2])) === null, 'no source left after 3');
+    });
+
+    await test('deezer: no MP3 proxying — relay is JSON-only, never streams audio', () => {
+        const t = new DeezerProvider()._toTrack(deezerSample);
+        assert(t.audioUrl.indexOf('dzcdn.net') !== -1 && t.audioUrl.indexOf('/api/deezer') === -1, 'audio URL is provider CDN, not relay');
+        const relaySrc = fs.readFileSync('api/deezer.js', 'utf8');
+        assert(relaySrc.indexOf('audio/mpeg') === -1, 'relay never serves an audio content-type');
+    });
+
+    await test('youtube: provider registered, id=youtube, priority 95, label YouTube', () => {
+        assert(typeof YouTubeProvider === 'function', 'YouTubeProvider class exported');
+        const M = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000 });
+        M.registerProvider(new YouTubeProvider());
+        assert(M.config.priority.youtube === 95, 'youtube priority 95, got ' + M.config.priority.youtube);
+        assert(M.config.priority.deezer > M.config.priority.youtube, 'deezer 98 > youtube 95');
+        assert(M.isEnabled('youtube'), 'youtube enabled');
+        const p = new YouTubeProvider();
+        assert(p.id === 'youtube' && p.name === 'YouTube', 'id + label');
+        assert(p.legal && p.legal.keyEnv === 'YOUTUBE_API_KEY', 'server-side key env declared');
+    });
+
+    await test('youtube: relay URL — /api/youtube with query+maxResults, key never in browser URL', async () => {
+        const prev = sandbox.fetch;
+        let seen = null;
+        sandbox.fetch = (url) => { seen = String(url); return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ items: [] }) }); };
+        try {
+            await new YouTubeProvider().searchTracks('Ebi');
+            assert(seen && seen.indexOf('/api/youtube?query=') !== -1 && seen.indexOf('maxResults=25') !== -1, 'relay URL, got ' + seen);
+            assert(seen.indexOf('googleapis.com') === -1 && seen.indexOf('key=') === -1, 'no key/upstream in browser URL');
+        } finally { sandbox.fetch = prev; }
+    });
+
+    await test('youtube: key-missing 503 is isolated — other providers unaffected', async () => {
+        const prev = sandbox.fetch;
+        sandbox.fetch = (url, init) => {
+            const u = String(url);
+            if (u.indexOf('/api/youtube') !== -1) return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ error: 'YOUTUBE_API_KEY_NOT_CONFIGURED' }) });
+            if (u.indexOf('/api/deezer') !== -1) return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ data: [deezerSample] }) });
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+        try {
+            const M = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000 });
+            M.registerProvider(new YouTubeProvider());
+            M.registerProvider(new DeezerProvider());
+            const ctx = buildCtx('Ebi');
+            const variants = buildSearchVariants('Ebi').slice(0, 3);
+            const out = await M.searchOthers('Ebi', ctx, variants, 'nope');
+            assert(Array.isArray(out) && out.length >= 1, 'deezer results survive youtube 503');
+            const diag = M.diagnostics().find((d) => d.id === 'youtube');
+            assert(diag && diag.failures >= 1, 'youtube failure recorded');
+        } finally { sandbox.fetch = prev; }
+    });
+
+    await test('youtube: normalization — metadata-only track, sourceType youtube, playable false', () => {
+        const t = new YouTubeProvider()._toTrack(youtubeSample);
+        assert(t, 'normalized');
+        assert(t.provider === 'youtube' && t.sourceType === 'youtube', 'provider + sourceType');
+        assert(t.title === 'Ebi - Hamin Khoobe (Official Video)' && t.artist === 'Ebi Official', 'title/artist');
+        assert(t.coverUrl === youtubeSample.thumbnail, 'thumbnail as cover');
+        assert(t.playable === false && t.downloadable === false, 'never treated as direct audio');
+        assert(t.audioUrl === null && t.streamUrl === null, 'no audio URL (metadata-only by design)');
+        assert(t.externalUrl === 'https://www.youtube.com/watch?v=AbC123xyz', 'watch URL');
+        assert(t.metadata.youtube.videoId === 'AbC123xyz' && t.metadata.youtube.playbackMode === 'youtube-embed', 'nested metadata');
     });
 
 

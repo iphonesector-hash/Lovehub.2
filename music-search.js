@@ -85,6 +85,8 @@
         'codebazan-rjavan': 110,
         'audius': 105,
         'internet-archive': 100,
+        'deezer': 98,
+        'youtube': 95,
         'melobit': 90,
         'ahangify': 80,
         'melodify': 70,
@@ -94,6 +96,8 @@
         'codebazan-rjavan': true,
         'audius': true,
         'internet-archive': true,
+        'deezer': true,
+        'youtube': true,
         'melobit': true,
         'ahangify': true,
         'melodify': true,
@@ -510,6 +514,8 @@
         'codebazan-rjavan': 'Radio Javan',
         'audius': 'Audius',
         'internet-archive': 'Internet Archive',
+        'deezer': 'Deezer',
+        'youtube': 'YouTube',
         'melobit': 'Melobit',
         'ahangify': 'Ahangify',
         'melodify': 'Melodify',
@@ -853,14 +859,17 @@
     // read it directly; the relay forwards ?query=/?id= only and returns the
     // JSON unchanged with allowlisted CORS. Audio URLs in the response stay
     // provider-direct (never proxied/cached by the relay).
-    function rjavanRelayBase() {
+    // Same-origin relay when served from the Vercel production host;
+    // absolute relay URL from any other origin (GitHub Pages, previews, Node
+    // tests). The relays allowlist the LoveHub frontend origins.
+    function relayBase(route) {
         const host = (typeof window !== 'undefined' && window.location && window.location.host) || '';
-        // Same-origin relay when served from the Vercel production host.
-        if (/lovehub-gamma\.vercel\.app$/i.test(host)) return '/api/rjavan';
-        // Absolute relay URL from any other origin (GitHub Pages, previews,
-        // Node tests); the relay allowlists the LoveHub frontend origins.
-        return 'https://lovehub-gamma.vercel.app/api/rjavan';
+        if (/lovehub-gamma\.vercel\.app$/i.test(host)) return route;
+        return 'https://lovehub-gamma.vercel.app' + route;
     }
+    function rjavanRelayBase() { return relayBase('/api/rjavan'); }
+    function deezerRelayBase() { return relayBase('/api/deezer'); }
+    function youtubeRelayBase() { return relayBase('/api/youtube'); }
 
     // -----------------------------------------------------------------------
     // CodeBazan → Radio Javan — keyless, CORS-open search that returns direct
@@ -1108,6 +1117,200 @@
                     genre: s.genre || null,
                     releaseDate: s.release_date || null,
                     playCount: s.play_count != null ? s.play_count : null
+                };
+            }
+            return t;
+        }
+    }
+
+
+    // -----------------------------------------------------------------------
+    // Deezer — official public API (api.deezer.com) via the same-origin Vercel
+    // relay (api/deezer.js). Keyless. Search metadata is CORS-blocked in the
+    // browser (api.deezer.com sends no Access-Control-Allow-Origin), so the
+    // JSON goes through the relay; the returned `preview` URLs are 30-second
+    // CDN samples (cdns-preview-*.dzcdn.net) served with ACAO * + Range 206
+    // and play directly in the browser — they are NEVER proxied, cached or
+    // redistributed by LoveHub. sourceType: 'preview' (30s, not full track).
+    // Legal status: 'unknown' (previews only, per Deezer API terms).
+    // -----------------------------------------------------------------------
+    class DeezerProvider extends MusicSearchProvider {
+        constructor() {
+            super('Deezer', 'deezer');
+            this.preferredQueryKinds = ['original', 'normalized', 'latin'];
+            this.legal = {
+                status: 'unknown',
+                authRequired: false,
+                keyEnv: null,
+                docsUrl: 'https://developers.deezer.com/api/search',
+                notes: 'Official Deezer public API via same-origin Vercel relay (JSON metadata only). 30s previews stream directly from Deezer CDN; never proxy/cache/redistribute audio. Terms not independently verified.'
+            };
+        }
+
+        async searchTracks(query) {
+            const q = sanitizeQuery(query);
+            if (!q) return [];
+            const json = await fetchJson(
+                deezerRelayBase() + '?query=' + encodeURIComponent(q) + '&limit=50',
+                this.timeoutMs
+            );
+            const data = (json && Array.isArray(json.data)) ? json.data : [];
+            return data.map((s) => this._toTrack(s)).filter(Boolean);
+        }
+
+        async getTrack(id) {
+            if (id == null) return null;
+            const json = await fetchJson(
+                deezerRelayBase() + '?id=' + encodeURIComponent(String(id)),
+                this.timeoutMs
+            );
+            if (!json || json.id == null) return null;
+            return this._toTrack(json);
+        }
+
+        // Map one Deezer track into the unified LoveHub track shape. Unknown
+        // fields stay null; original Deezer metadata is preserved in
+        // metadata.deezer (plus flat keys for backward compatibility).
+        _toTrack(s) {
+            if (!s || typeof s !== 'object') return null;
+            const id = s.id != null ? String(s.id) : null;
+            if (!id) return null;
+            const title = String(s.title || s.title_short || '').trim().slice(0, 200) || 'Untitled';
+            const artist = (s.artist && s.artist.name) ? String(s.artist.name).trim().slice(0, 200) : null;
+            const album = (s.album && s.album.title) ? String(s.album.title).trim().slice(0, 200) : null;
+            const cover = (s.album && (s.album.cover_medium || s.album.cover_big || s.album.cover)) || null;
+            const preview = String(s.preview || '').trim() || null;
+            const duration = Number(s.duration);
+            const t = normalizeTrack({
+                id,
+                title,
+                artist,
+                album,
+                duration: isFinite(duration) && duration > 0 ? duration : null,
+                cover,
+                audioUrl: preview,
+                streamUrl: preview,
+                externalUrl: s.link || null
+            }, { id: this.id, label: this.name, sourceType: 'preview', downloadable: false });
+            if (t) {
+                t.metadata = Object.assign(t.metadata || {}, {
+                    deezerId: id,
+                    rank: s.rank != null ? s.rank : null,
+                    explicitLyrics: !!s.explicit_lyrics,
+                    artistId: (s.artist && s.artist.id != null) ? s.artist.id : null,
+                    albumId: (s.album && s.album.id != null) ? s.album.id : null,
+                    previewUrl: preview,
+                    artist_farsi: null,
+                    song_farsi: null
+                });
+                t.metadata.deezer = {
+                    trackId: id,
+                    artistId: (s.artist && s.artist.id != null) ? String(s.artist.id) : null,
+                    albumId: (s.album && s.album.id != null) ? String(s.album.id) : null,
+                    rank: s.rank != null ? s.rank : null,
+                    explicitLyrics: !!s.explicit_lyrics,
+                    preview: preview,
+                    link: s.link || null,
+                    playbackMode: 'html5-audio',
+                    sourceType: 'preview'
+                };
+            }
+            return t;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // YouTube — official YouTube Data API v3 via the same-origin Vercel relay
+    // (api/youtube.js). The YOUTUBE_API_KEY stays server-side; until it is
+    // configured the relay returns 503 YOUTUBE_API_KEY_NOT_CONFIGURED, which
+    // this provider surfaces as a normal per-provider failure (recorded in
+    // diagnostics, isolated from every other provider).
+    //
+    // The official API returns METADATA ONLY — no audio URLs. Results are
+    // marked sourceType 'youtube' / playbackMode 'youtube-embed' and are NOT
+    // playable as <audio> (playable=false) until the embed playback UI ships.
+    // Playback will use YouTube's own IFrame player — never a rip/proxy.
+    // Legal status: 'unknown' (metadata + official embed only).
+    // -----------------------------------------------------------------------
+    class YouTubeProvider extends MusicSearchProvider {
+        constructor() {
+            super('YouTube', 'youtube');
+            this.preferredQueryKinds = ['original', 'latin'];
+            this.legal = {
+                status: 'unknown',
+                authRequired: true,
+                keyEnv: 'YOUTUBE_API_KEY',
+                docsUrl: 'https://developers.google.com/youtube/v3/docs/search/list',
+                notes: 'Official YouTube Data API v3 (search/metadata only). YOUTUBE_API_KEY lives server-side in the Vercel relay. No audio extraction; playback via official IFrame embed when UI support ships.'
+            };
+        }
+
+        async searchTracks(query) {
+            const q = sanitizeQuery(query);
+            if (!q) return [];
+            const json = await fetchJson(
+                youtubeRelayBase() + '?query=' + encodeURIComponent(q) + '&maxResults=25',
+                this.timeoutMs
+            );
+            const items = (json && Array.isArray(json.items)) ? json.items : [];
+            return items.map((s) => this._toTrack(s)).filter(Boolean);
+        }
+
+        async getTrack(id) {
+            if (id == null) return null;
+            const json = await fetchJson(
+                youtubeRelayBase() + '?id=' + encodeURIComponent(String(id)),
+                this.timeoutMs
+            );
+            const item = (json && Array.isArray(json.items) && json.items[0]) || null;
+            return item ? this._toTrack(item) : null;
+        }
+
+        // Map one YouTube video into the unified LoveHub track shape. Metadata
+        // only by design — never a fake audio URL.
+        _toTrack(s) {
+            if (!s || typeof s !== 'object') return null;
+            const videoId = s.videoId || s.id || null;
+            if (!videoId) return null;
+            const title = String(s.title || '').trim().slice(0, 200) || 'Untitled';
+            const artist = s.channelTitle ? String(s.channelTitle).trim().slice(0, 200) : null;
+            const videoUrl = 'https://www.youtube.com/watch?v=' + encodeURIComponent(videoId);
+            const duration = Number(s.durationSeconds);
+            const t = normalizeTrack({
+                id: videoId,
+                title,
+                artist,
+                album: null,
+                duration: isFinite(duration) && duration > 0 ? duration : null,
+                cover: s.thumbnail || null,
+                audioUrl: null,
+                streamUrl: null,
+                externalUrl: videoUrl
+            }, { id: this.id, label: this.name, sourceType: 'youtube', downloadable: false });
+            if (t) {
+                // Explicitly NOT an <audio>-playable source: keep playable false
+                // so the existing playable filter/player never tries to load it
+                // as an MP3. Embed playback is a future UI mode.
+                t.playable = false;
+                t.audioEvidence = false;
+                t.metadata = Object.assign(t.metadata || {}, {
+                    youtubeId: videoId,
+                    channelId: s.channelId || null,
+                    channelTitle: artist,
+                    publishedAt: s.publishedAt || null,
+                    kind: s.kind || 'youtube#video',
+                    artist_farsi: null,
+                    song_farsi: null
+                });
+                t.metadata.youtube = {
+                    videoId,
+                    channelId: s.channelId || null,
+                    channelTitle: artist,
+                    publishedAt: s.publishedAt || null,
+                    thumbnail: s.thumbnail || null,
+                    kind: s.kind || 'youtube#video',
+                    playbackMode: 'youtube-embed',
+                    sourceType: 'youtube'
                 };
             }
             return t;
@@ -1395,6 +1598,8 @@
                 new CodeBazanProvider(),
                 new CodeBazanRjavanProvider(),
                 new AudiusProvider(),
+                new DeezerProvider(),
+                new YouTubeProvider(),
                 new DirectAudioProvider()
             ];
             this.manager = new MusicProviderManager();
@@ -1594,5 +1799,7 @@
     window.MusicSearch.CodeBazanRjavanProvider = CodeBazanRjavanProvider;
     window.MusicSearch.rjavanRelayBase = rjavanRelayBase;
     window.MusicSearch.AudiusProvider = AudiusProvider;
+    window.MusicSearch.DeezerProvider = DeezerProvider;
+    window.MusicSearch.YouTubeProvider = YouTubeProvider;
     window.MusicSearch.DirectAudioProvider = DirectAudioProvider;
 })();
