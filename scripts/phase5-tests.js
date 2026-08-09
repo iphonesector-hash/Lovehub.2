@@ -818,7 +818,7 @@ async function main() {
     await test('registry: all seven providers registered with priority config', () => {
         const M = sandbox.window.MusicSearch;
         const ids = M.manager.providers.map((p) => p.id).sort();
-        assert(ids.join(',') === 'ahangify,codebazan,codebazan-rjavan,direct-audio,internet-archive,melobit,melodify', 'registered: ' + ids.join(','));
+        assert(ids.join(',') === 'ahangify,audius,codebazan,codebazan-rjavan,direct-audio,internet-archive,melobit,melodify', 'registered: ' + ids.join(','));
         assert(M.manager.config.priority['codebazan-rjavan'] === 110 && M.manager.config.priority['internet-archive'] === 100 && M.manager.config.priority.melobit === 90, 'priority config present');
         assert(M.manager.isEnabled('codebazan-rjavan') && M.manager.isEnabled('melobit') && !M.manager.isEnabled('direct-audio'), 'enable flags default');
     });
@@ -1409,6 +1409,184 @@ async function main() {
             assert(relay.indexOf('no-store') !== -1, 'relay responses are no-store');
             assert(/upstream\.text\(\)|JSON\.parse|sendJson\(res, 200, parsed\)/.test(relay), 'relay returns JSON, never audio bytes');
         } finally { sandbox.fetch = realFetch; }
+    });
+
+
+    // ---------------------------------------------------------------------------
+    console.log('\n== Phase 11: Audius provider ==');
+
+    const AudiusProvider = sandbox.window.MusicSearch.AudiusProvider;
+
+    const audiusSample = {
+        id: 'l5vpN',
+        track_id: 945150,
+        title: 'Ebi - nazi naz kon concert',
+        slug: 'ebi-nazi-naz-kon-concert',
+        duration: 368,
+        is_downloadable: false,
+        is_original_available: false,
+        genre: 'Pop',
+        mood: 'Happy',
+        play_count: 1106,
+        favorite_count: 42,
+        release_date: '2022-03-10T11:57:25Z',
+        user: { name: 'Greatest Hits', handle: 'delband', id: '1glZr' },
+        artwork: {
+            '150x150': 'https://v.monophonic.digital/content/QmdoLWwA5meRPtKZ21TwfJEUVU9NNuFYFbPZnwECHXtAgV/150x150.jpg',
+            '480x480': 'https://v.monophonic.digital/content/QmdoLWwA5meRPtKZ21TwfJEUVU9NNuFYFbPZnwECHXtAgV/480x480.jpg',
+            '1000x1000': 'https://v.monophonic.digital/content/QmdoLWwA5meRPtKZ21TwfJEUVU9NNuFYFbPZnwECHXtAgV/1000x1000.jpg'
+        }
+    };
+
+    function mockAudiusFetch(handler) {
+        return (url, init) => {
+            const u = String(url);
+            if (u.indexOf('api.audius.co') !== -1) return handler(u, init);
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+    }
+
+    await test('audius: provider registered, id=audius, priority 105, label Audius', () => {
+        assert(typeof AudiusProvider === 'function', 'AudiusProvider class exported');
+        const M = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000 });
+        M.registerProvider(new AudiusProvider());
+        assert(M.config.priority.audius === 105, 'audius priority 105, got ' + M.config.priority.audius);
+        assert(M.config.priority['codebazan-rjavan'] > M.config.priority.audius, 'rjavan 110 > audius 105');
+        assert(M.config.priority.audius > M.config.priority['internet-archive'], 'audius 105 > IA 100');
+        assert(M.isEnabled('audius'), 'audius enabled');
+        const p = new AudiusProvider();
+        assert(p.id === 'audius' && p.name === 'Audius', 'id + label');
+        assert(p.legal && p.legal.authRequired === false && !p.legal.keyEnv, 'keyless, no secret');
+    });
+
+    await test('audius: searchTracks normalizes real response into LoveHub shape', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = mockAudiusFetch(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [audiusSample] }) }));
+        try {
+            const p = new AudiusProvider();
+            const tracks = await p.searchTracks('Ebi');
+            assert(tracks.length === 1, 'one track returned');
+            const t = tracks[0];
+            assert(t.provider === 'audius' && t.providerId === 'audius' && t.source === 'Audius', 'provider ids');
+            assert(t.title === 'Ebi - nazi naz kon concert', 'title preserved when uploader != title prefix, got: ' + t.title);
+            assert(t.artist === 'Greatest Hits', 'artist from user.name');
+            assert(t.duration === 368, 'duration');
+            assert(t.coverUrl && /480x480/.test(t.coverUrl), 'cover uses 480x480 artwork');
+            assert(t.audioUrl === 'https://api.audius.co/v1/tracks/l5vpN/stream' && t.streamUrl === t.audioUrl, 'stream URL');
+            assert(t.playable === true && t.playableUrl === t.audioUrl, 'playable via stream endpoint');
+            assert(t.sourceType === 'stream' && t.downloadable === false, 'sourceType + not downloadable');
+            assert(t.metadata.audiusId === 'l5vpN' && t.metadata.genre === 'Pop' && t.metadata.playCount === 1106, 'original metadata preserved');
+            assert(t.metadata.artist_farsi === null && t.metadata.song_farsi === null, 'no invented Farsi fields');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('audius: getTrack(id) resolves via /v1/tracks/{id}', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = mockAudiusFetch((u) => Promise.resolve({ ok: true, json: () => Promise.resolve({ data: u.indexOf('/tracks/l5vpN?') !== -1 ? audiusSample : null }) }));
+        try {
+            const p = new AudiusProvider();
+            const t = await p.getTrack('l5vpN');
+            assert(t && t.id === 'l5vpN' && t.artist === 'Greatest Hits' && t.playable === true, 'track by id');
+            const none = await p.getTrack(null);
+            assert(none === null, 'null id → null');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('audius: looksPlayableUrl accepts official stream endpoint', () => {
+        const LP = sandbox.window.MusicSearch.looksPlayableUrl;
+        assert(LP('https://api.audius.co/v1/tracks/l5vpN/stream') === true, 'audius stream URL playable');
+        assert(LP('https://api.audius.co/v1/tracks/l5vpN/stream?x=1') === true, 'query tolerated');
+        assert(LP('https://example.com/plain/stream') === false, 'other /stream paths stay non-playable');
+        assert(LP('https://api.audius.co/v1/tracks/x/stream.html') === false, 'BAD_EXT still blocked');
+    });
+
+    await test('audius: empty response + malformed JSON are isolated failures', async () => {
+        const realFetch = sandbox.fetch;
+        const modes = ['empty', 'malformed', '500'];
+        for (const mode of modes) {
+            sandbox.fetch = (url, init) => {
+                const u = String(url);
+                if (u.indexOf('api.audius.co') !== -1) {
+                    if (mode === '500') return Promise.resolve({ ok: false, status: 500 });
+                    if (mode === 'malformed') return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError('bad json')) });
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) });
+                }
+                return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+            };
+            const p = new AudiusProvider();
+            const tracks = await p.searchTracks('Ebi').catch(() => []);
+            assert(tracks.length === 0, mode + ' → no tracks (no crash)');
+        }
+        sandbox.fetch = realFetch;
+    });
+
+    await test('audius: failure isolation — audius down never breaks rjavan + IA', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = (url, init) => {
+            const u = String(url);
+            if (u.indexOf('api.audius.co') !== -1) return Promise.resolve({ ok: false, status: 500 });
+            if (u.indexOf('api/rjavan') !== -1 || u.indexOf('lovehub-gamma.vercel.app/api/rjavan') !== -1) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ mp3s: [rjSample] }) });
+            }
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+        try {
+            const M = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000 });
+            M.registerProvider(new CodeBazanRjavanProvider());
+            M.registerProvider(new AudiusProvider());
+            M.registerProvider(fakeProvider('internet-archive', 'IA', { items: [{ title: 'Delbar', artist: 'Ebi', audioUrl: 'https://ia/d.mp3' }] }));
+            const ctx = buildCtx('Ebi');
+            const variants = buildSearchVariants('Ebi').slice(0, 3);
+            const out = await M.searchOthers('Ebi', ctx, variants, 'nope');
+            assert(Array.isArray(out) && out.length >= 1, 'results survive audius 500');
+            const diag = M.diagnostics().find((d) => d.id === 'audius');
+            assert(diag && diag.failures >= 1, 'audius failure recorded');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('audius: dedupe — same song from audius + rjavan merges with rjavan primary', async () => {
+        const aud = { title: 'Hamin Khoobe', artist: 'Ebi', provider: 'audius', playableUrl: 'https://api.audius.co/v1/tracks/aaa/stream', audioEvidence: true };
+        const rj = { title: 'Hamin Khoobe', artist: 'Ebi', provider: 'codebazan-rjavan', playableUrl: 'https://host1.media-rj.com/media/mp3/mp3-256/52642-becdc8d090175a7.mp3', audioEvidence: true };
+        // The real pipeline merges via dedupeKeyFor (normalized artist|title),
+        // not by provider ID or unique URL — dedupeTracks alone only collapses
+        // identical keys/URLs, so exercise _mergeDedupe like searchSmart does.
+        const MS = sandbox.window.MusicSearch;
+        assert(MS.dedupeKeyFor(aud) === MS.dedupeKeyFor(rj), 'same normalized artist|title dedupe key');
+        const merged = MS.manager._mergeDedupe([rj, aud], ['codebazan-rjavan', 'audius']);
+        assert(merged.length === 1, 'one result after dedupe');
+        assert(merged[0].sources.length === 2, 'both playable sources kept for fallback');
+        const out = rankF(merged, buildCtx('hamin khoobe'));
+        assert(out.results.length === 1, 'one ranked result');
+        const r = out.results[0];
+        const prov = (r.sources && r.sources[0] && r.sources[0].provider) || r.provider;
+        assert(prov === 'codebazan-rjavan', 'rjavan primary (higher priority)');
+    });
+
+    await test('audius: playback fallback — rjavan fails → audius succeeds (via sources)', () => {
+        const track = {
+            title: 'Hamin Khoobe', artist: 'Ebi',
+            playableUrl: 'https://host1.media-rj.com/media/mp3/mp3-256/52642-becdc8d090175a7.mp3',
+            sources: [
+                { provider: 'codebazan-rjavan', playable: true, audioUrl: 'https://host1.media-rj.com/media/mp3/mp3-256/52642-becdc8d090175a7.mp3' },
+                { provider: 'audius', playable: true, audioUrl: 'https://api.audius.co/v1/tracks/aaa/stream' },
+                { provider: 'internet-archive', playable: true, audioUrl: 'https://ia/d.mp3' }
+            ]
+        };
+        const NPS = sandbox.window.MusicSearch.nextPlayableSource;
+        const next = NPS(track, track.playableUrl);
+        assert(next === 'https://api.audius.co/v1/tracks/aaa/stream', 'audius tried after rjavan, got: ' + next);
+        const next2 = NPS(track, new Set([track.playableUrl, next]));
+        assert(next2 === 'https://ia/d.mp3', 'IA tried after audius');
+        assert(NPS(track, new Set([track.playableUrl, next, next2])) === null, 'no source left after 3');
+    });
+
+    await test('audius: Adele query does not rank unrelated results as exact match', () => {
+        const ctx = buildCtx('Adele');
+        const unrelated = { title: 'Some Upload', artist: 'Unknown Artist', playableUrl: 'https://api.audius.co/v1/tracks/zzz/stream', audioEvidence: true };
+        const s = scoreT(unrelated, ctx);
+        assert(s.score < sandbox.window.MusicSearch.RELEVANCE_MIN, 'unrelated below threshold (' + s.score + ')');
     });
 
 

@@ -83,6 +83,7 @@
     const MAX_PROVIDER_VARIANTS = 2;       // variants a provider may receive
     const DEFAULT_PROVIDER_PRIORITY = {
         'codebazan-rjavan': 110,
+        'audius': 105,
         'internet-archive': 100,
         'melobit': 90,
         'ahangify': 80,
@@ -91,6 +92,7 @@
     };
     const DEFAULT_PROVIDER_ENABLED = {
         'codebazan-rjavan': true,
+        'audius': true,
         'internet-archive': true,
         'melobit': true,
         'ahangify': true,
@@ -321,6 +323,9 @@
         // utility works in any JS environment.
         const path = String(url).split(/[?#]/, 1)[0];
         if (BAD_EXT.test(path)) return false;
+        // Audius official stream endpoint (no file extension; live-verified
+        // audio/mpeg + Range 206 + CORS *).
+        if (/\/v1\/tracks\/[^/]+\/stream$/.test(path)) return true;
         const m = path.match(/\.([a-z0-9]{2,5})$/i);
         if (!m) return false;
         return AUDIO_EXT.has(m[1].toLowerCase());
@@ -503,6 +508,7 @@
     // Map an internal provider id → user-visible label (and back).
     const PROVIDER_LABELS = {
         'codebazan-rjavan': 'Radio Javan',
+        'audius': 'Audius',
         'internet-archive': 'Internet Archive',
         'melobit': 'Melobit',
         'ahangify': 'Ahangify',
@@ -1005,6 +1011,99 @@
     }
 
     // -----------------------------------------------------------------------
+    // Audius — keyless official API (api.audius.co/v1). Live-verified
+    // (Aug 2026): search + stream return HTTP 200, CORS *, audio/mpeg with
+    // Range 206. No relay needed — direct browser calls. Stream URLs point
+    // at Audius discovery nodes; LoveHub never proxies/caches/redistributes
+    // audio. Legal status: public read API, terms not independently verified.
+    // -----------------------------------------------------------------------
+    class AudiusProvider extends MusicSearchProvider {
+        constructor() {
+            super('Audius', 'audius');
+            this.preferredQueryKinds = ['original', 'latin'];
+            this.legal = {
+                status: 'unknown',
+                authRequired: false,
+                keyEnv: null,
+                docsUrl: 'https://docs.audius.org/api',
+                notes: 'Official Audius read API (api.audius.co). Keyless; direct browser streaming only; do not proxy, cache or redistribute audio. Terms not independently verified.'
+            };
+        }
+
+        async searchTracks(query) {
+            const q = sanitizeQuery(query);
+            if (!q) return [];
+            const json = await fetchJson(
+                'https://api.audius.co/v1/tracks/search?query=' + encodeURIComponent(q) + '&app_name=LoveHub&limit=50',
+                this.timeoutMs
+            );
+            const data = (json && Array.isArray(json.data)) ? json.data : [];
+            return data.map((s) => this._toTrack(s)).filter(Boolean);
+        }
+
+        async getTrack(id) {
+            if (id == null) return null;
+            const json = await fetchJson(
+                'https://api.audius.co/v1/tracks/' + encodeURIComponent(String(id)) + '?app_name=LoveHub',
+                this.timeoutMs
+            );
+            const data = (json && json.data) || null;
+            if (!data) return null;
+            return this._toTrack(data);
+        }
+
+        // Map one Audius track into the unified LoveHub track shape. Never
+        // invents data: unknown fields stay null. Original Audius metadata is
+        // preserved inside metadata.
+        _toTrack(s) {
+            if (!s || typeof s !== 'object') return null;
+            const id = s.id != null ? String(s.id) : (s.track_id != null ? String(s.track_id) : null);
+            if (!id) return null;
+            const artist = (s.user && s.user.name) ? String(s.user.name).trim().slice(0, 200) : null;
+            const rawTitle = String(s.title || '').trim();
+            // Audius titles arrive as 'Artist - Title'; prefer the clean song
+            // name (also improves cross-provider dedupe keys).
+            let title = rawTitle || 'Untitled';
+            if (artist) {
+                const prefix = artist + ' - ';
+                if (title.toLowerCase().startsWith(prefix.toLowerCase())) title = title.slice(prefix.length);
+            }
+            title = String(title).replace(/^[\u0022\u0027\u201c\u201d]+|[\u0022\u0027\u201c\u201d]+$/g, '').trim().slice(0, 200) || 'Untitled';
+            const art = (s.artwork && typeof s.artwork === 'object') ? s.artwork : {};
+            const cover = art['480x480'] || art['1000x1000'] || art['150x150'] || null;
+            const duration = Number(s.duration);
+            const stream = 'https://api.audius.co/v1/tracks/' + encodeURIComponent(id) + '/stream';
+            const t = normalizeTrack({
+                id,
+                title,
+                artist,
+                album: null,
+                duration: isFinite(duration) && duration > 0 ? duration : null,
+                cover,
+                audioUrl: stream,
+                streamUrl: stream,
+                externalUrl: (s.permalink || s.slug) ? 'https://audius.co/' + encodeURIComponent(String(s.slug || '')) : null
+            }, { id: this.id, label: this.name, sourceType: 'stream', downloadable: false });
+            if (t) {
+                t.metadata = Object.assign(t.metadata || {}, {
+                    audiusId: id,
+                    genre: s.genre || null,
+                    mood: s.mood || null,
+                    playCount: s.play_count != null ? s.play_count : null,
+                    favoriteCount: s.favorite_count != null ? s.favorite_count : null,
+                    releaseDate: s.release_date || null,
+                    isDownloadable: !!s.is_downloadable,
+                    isOriginalAvailable: !!s.is_original_available,
+                    artist_handle: (s.user && s.user.handle) || null,
+                    artist_farsi: null,
+                    song_farsi: null
+                });
+            }
+            return t;
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // MusicProviderManager — central registry, priorities, timeouts, cache,
     // failure isolation, cross-provider dedupe and playback fallback.
     // -----------------------------------------------------------------------
@@ -1284,6 +1383,7 @@
                 new MelodifyProvider(),
                 new CodeBazanProvider(),
                 new CodeBazanRjavanProvider(),
+                new AudiusProvider(),
                 new DirectAudioProvider()
             ];
             this.manager = new MusicProviderManager();
@@ -1482,5 +1582,6 @@
     window.MusicSearch.CodeBazanProvider = CodeBazanProvider;
     window.MusicSearch.CodeBazanRjavanProvider = CodeBazanRjavanProvider;
     window.MusicSearch.rjavanRelayBase = rjavanRelayBase;
+    window.MusicSearch.AudiusProvider = AudiusProvider;
     window.MusicSearch.DirectAudioProvider = DirectAudioProvider;
 })();
