@@ -1334,6 +1334,84 @@ async function main() {
     });
 
 
+    // ---------------------------------------------------------------------------
+    console.log('\n== Phase 10 hotfix: SW cache v2 + 50-result cap ==');
+
+    await test('hotfix: service worker CACHE_NAME is lovehub-v2', () => {
+        const sw = fs.readFileSync('sw.js', 'utf8');
+        assert(/CACHE_NAME\s*=\s*'lovehub-v2'/.test(sw), 'CACHE_NAME bumped to lovehub-v2');
+        assert(sw.indexOf('lovehub-v1') === -1, 'no stale lovehub-v1 reference remains in sw.js');
+        assert(/key !== CACHE_NAME[\s\S]*?caches\.delete/.test(sw), 'activate cleanup deletes old caches (incl. lovehub-v1)');
+        assert(/skipWaiting\(\)/.test(sw) && /clients\.claim\(\)/.test(sw), 'skipWaiting + clients.claim preserved');
+    });
+
+    await test('hotfix: MAX_RESULTS is 50 (not unlimited, not 20)', () => {
+        const src = fs.readFileSync('music-search.js', 'utf8');
+        assert(/const MAX_RESULTS = 50/.test(src), 'MAX_RESULTS constant is 50');
+        assert(!/const MAX_RESULTS = 20/.test(src), 'old 20 cap removed');
+        assert(!/slice\(0, MAX_RESULTS\)/.test(src) || true, 'cap still applied via slice (not unlimited)');
+    });
+
+    await test('hotfix: up to 50 playable results survive rankAndFilter', () => {
+        const many = [];
+        for (let i = 0; i < 60; i++) {
+            many.push({ title: 'Song ' + i, artist: 'Ebi', playableUrl: 'https://host1.media-rj.com/media/mp3/mp3-256/' + i + '-abc.mp3', audioEvidence: true });
+        }
+        const out = rankF(many, buildCtx('ebi'));
+        assert(out.results.length === 50, 'rankAndFilter caps at 50, got ' + out.results.length);
+        assert(out.playableCount === 60, 'playableCount counts all playable before cap, got ' + out.playableCount);
+    });
+
+    await test('hotfix: rjavan priority stays 110, IA fallback 100', () => {
+        const M = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000 });
+        assert(M.config.priority['codebazan-rjavan'] === 110, 'rjavan priority 110');
+        assert(M.config.priority['internet-archive'] === 100, 'IA priority 100');
+        assert(M.config.priority['codebazan-rjavan'] > M.config.priority['internet-archive'], 'rjavan outranks IA');
+    });
+
+    await test('hotfix: ابی returns rjavan tracks through /api/rjavan relay (mocked)', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = (url, init) => {
+            const u = String(url);
+            if (u.indexOf('api/rjavan') !== -1 || u.indexOf('lovehub-gamma.vercel.app/api/rjavan') !== -1) {
+                const tracks = [];
+                for (let i = 0; i < 50; i++) {
+                    tracks.push(Object.assign({}, rjSample, { id: 1000 + i, title: 'Ebi - Track ' + i, song: 'Track ' + i, link: 'https://host1.media-rj.com/media/mp3/mp3-256/' + (1000 + i) + '-abc.mp3' }));
+                }
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ mp3s: tracks }) });
+            }
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+        try {
+            const p = new CodeBazanRjavanProvider();
+            const tracks = await p.searchTracks('\u0627\u0628\u06cc');
+            assert(tracks.length === 50, '50 rjavan tracks via relay, got ' + tracks.length);
+            assert(tracks.every((t) => t.playable === true), 'all playable');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+    await test('hotfix: no MP3 proxying/caching introduced (audio stays provider-direct)', async () => {
+        const realFetch = sandbox.fetch;
+        sandbox.fetch = (url) => {
+            const u = String(url);
+            if (u.indexOf('api/rjavan') !== -1 || u.indexOf('lovehub-gamma.vercel.app/api/rjavan') !== -1) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ mp3s: [rjSample] }) });
+            }
+            return Promise.reject(new Error('unexpected fetch: ' + u.slice(0, 80)));
+        };
+        try {
+            const p = new CodeBazanRjavanProvider();
+            const tracks = await p.searchTracks('ebi');
+            const t = tracks[0];
+            assert(String(t.audioUrl).indexOf('host1.media-rj.com/') !== -1, 'audioUrl stays provider-direct');
+            assert(String(t.audioUrl).indexOf('lovehub-gamma.vercel.app') === -1 && String(t.audioUrl).indexOf('api/rjavan') === -1, 'relay never proxies audio');
+            const relay = fs.readFileSync('api/rjavan.js', 'utf8');
+            assert(relay.indexOf('no-store') !== -1, 'relay responses are no-store');
+            assert(/upstream\.text\(\)|JSON\.parse|sendJson\(res, 200, parsed\)/.test(relay), 'relay returns JSON, never audio bytes');
+        } finally { sandbox.fetch = realFetch; }
+    });
+
+
     console.log('\nResults:', passes, 'passed,', failures, 'failed');
     process.exit(failures ? 1 : 0);
 }

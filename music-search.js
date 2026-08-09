@@ -65,7 +65,7 @@
     const MAX_VARIANTS_SEARCHED = 4;   // provider searches per user query
     const MAX_DOCS = 40;               // identifier-level candidates kept
     const PRE_RESOLVE = 14;            // metadata resolved for best candidates
-    const MAX_RESULTS = 20;            // results returned to the UI
+    const MAX_RESULTS = 50;            // results returned to the UI (Phase 10 hotfix)
     const PROBE_LIMIT = 4;             // playability probes per search
     const RELEVANCE_MIN = 55;          // minimum score to be "relevant"
 
