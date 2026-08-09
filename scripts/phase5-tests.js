@@ -815,11 +815,11 @@ async function main() {
         assert(seen.length > 0 && !seen.some((s) => s === 'ابی') && /^[a-z]/i.test(seen[0]), 'latin variant used: ' + seen.join(','));
     });
 
-    await test('registry: all nine providers registered with priority config', () => {
+    await test('registry: all ten providers registered with priority config', () => {
         const M = sandbox.window.MusicSearch;
         const ids = M.manager.providers.map((p) => p.id).sort();
-        assert(ids.join(',') === 'ahangify,audius,codebazan,codebazan-rjavan,deezer,direct-audio,internet-archive,melobit,melodify,youtube', 'registered: ' + ids.join(','));
-        assert(M.manager.config.priority['codebazan-rjavan'] === 110 && M.manager.config.priority['internet-archive'] === 100 && M.manager.config.priority.melobit === 90 && M.manager.config.priority.deezer === 98 && M.manager.config.priority.youtube === 95, 'priority config present');
+        assert(ids.join(',') === 'ahangify,audius,codebazan,codebazan-rjavan,deezer,direct-audio,internet-archive,melobit,melodify,telegram,youtube', 'registered: ' + ids.join(','));
+        assert(M.manager.config.priority['codebazan-rjavan'] === 110 && M.manager.config.priority['internet-archive'] === 100 && M.manager.config.priority.melobit === 90 && M.manager.config.priority.deezer === 98 && M.manager.config.priority.youtube === 95 && M.manager.config.priority.telegram === 94, 'priority config present');
         assert(M.manager.isEnabled('codebazan-rjavan') && M.manager.isEnabled('melobit') && M.manager.isEnabled('deezer') && M.manager.isEnabled('youtube') && !M.manager.isEnabled('direct-audio'), 'enable flags default');
     });
 
@@ -1337,9 +1337,9 @@ async function main() {
     // ---------------------------------------------------------------------------
     console.log('\n== Phase 10 hotfix: SW cache v2 + 50-result cap ==');
 
-    await test('hotfix: service worker CACHE_NAME is lovehub-v2', () => {
+    await test('hotfix: service worker CACHE_NAME is lovehub-v3', () => {
         const sw = fs.readFileSync('sw.js', 'utf8');
-        assert(/CACHE_NAME\s*=\s*'lovehub-v2'/.test(sw), 'CACHE_NAME bumped to lovehub-v2');
+        assert(/CACHE_NAME\s*=\s*'lovehub-v3'/.test(sw), 'CACHE_NAME bumped to lovehub-v3');
         assert(sw.indexOf('lovehub-v1') === -1, 'no stale lovehub-v1 reference remains in sw.js');
         assert(/key !== CACHE_NAME[\s\S]*?caches\.delete/.test(sw), 'activate cleanup deletes old caches (incl. lovehub-v1)');
         assert(/skipWaiting\(\)/.test(sw) && /clients\.claim\(\)/.test(sw), 'skipWaiting + clients.claim preserved');
@@ -1597,6 +1597,8 @@ async function main() {
 
     const DeezerProvider = sandbox.window.MusicSearch.DeezerProvider;
     const YouTubeProvider = sandbox.window.MusicSearch.YouTubeProvider;
+    const TelegramMusicProvider = sandbox.window.MusicSearch.TelegramMusicProvider;
+    const isTrackPlayable = sandbox.window.MusicSearch.isTrackPlayable;
 
     const deezerSample = {
         id: 10875561,
@@ -1772,18 +1774,215 @@ async function main() {
         } finally { sandbox.fetch = prev; }
     });
 
-    await test('youtube: normalization — metadata-only track, sourceType youtube, playable false', () => {
+    await test('youtube: embed normalization — playbackMode youtube-embed, playable via IFrame (no fake MP3)', () => {
         const t = new YouTubeProvider()._toTrack(youtubeSample);
         assert(t, 'normalized');
         assert(t.provider === 'youtube' && t.sourceType === 'youtube', 'provider + sourceType');
-        assert(t.title === 'Ebi - Hamin Khoobe (Official Video)' && t.artist === 'Ebi Official', 'title/artist');
+        assert(t.title === 'Hamin Khoobe' && t.artist === 'Ebi', 'parsed title/artist for dedupe');
         assert(t.coverUrl === youtubeSample.thumbnail, 'thumbnail as cover');
-        assert(t.playable === false && t.downloadable === false, 'never treated as direct audio');
-        assert(t.audioUrl === null && t.streamUrl === null, 'no audio URL (metadata-only by design)');
+        assert(t.playable === true && t.playbackMode === 'youtube-embed', 'playable via official embed');
+        assert(isTrackPlayable(t) === true, 'isTrackPlayable accepts embed track');
+        assert(t.audioUrl === null && t.streamUrl === null, 'still no audio URL (never a fake MP3)');
+        assert(t.downloadable === false, 'not downloadable');
         assert(t.externalUrl === 'https://www.youtube.com/watch?v=AbC123xyz', 'watch URL');
         assert(t.metadata.youtube.videoId === 'AbC123xyz' && t.metadata.youtube.playbackMode === 'youtube-embed', 'nested metadata');
+        assert(t.metadata.youtube.channelTitle === 'Ebi Official', 'original channel title preserved');
     });
 
+
+    console.log('\n== Phase 12b: Telegram (Apify) + YouTube embed playback ==');
+
+    const telegramSample = {
+        channel: 'RadioJavan',
+        id: 35257,
+        text: 'Ebi & Shahin Najafi – Shahrah (Music)',
+        publishedAt: '2025-08-01T12:00:00Z',
+        mediaAttachments: [
+            { type: 'photo', url: 'https://cdn1.telesco.pe/file/photo123.jpg' },
+            { type: 'audio', url: 'https://cdn1.telesco.pe/file/86b0438fc7.ogg?token=abc123&expires=99', mimeType: 'audio/ogg', fileName: 'shahrah.ogg' }
+        ]
+    };
+
+    await test('telegram: provider registered, id=telegram, priority 94, label Telegram', () => {
+        assert(typeof TelegramMusicProvider === 'function', 'TelegramMusicProvider class exported');
+        const M = new MusicProviderManager({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000 });
+        M.registerProvider(new TelegramMusicProvider());
+        assert(M.config.priority.telegram === 94, 'telegram priority 94, got ' + M.config.priority.telegram);
+        assert(M.config.priority.youtube > M.config.priority.telegram && M.config.priority.telegram > M.config.priority.melobit, 'youtube 95 > telegram 94 > melobit 90');
+        assert(M.isEnabled('telegram'), 'telegram enabled');
+        const p = new TelegramMusicProvider();
+        assert(p.id === 'telegram' && p.name === 'Telegram', 'id + label');
+        assert(p.legal && p.legal.keyEnv === 'APIFY_API_TOKEN', 'server-side token env declared');
+    });
+
+    await test('telegram: relay URL — /api/telegram?query=..., never apify.com, never token', async () => {
+        const prev = sandbox.fetch;
+        let seen = null;
+        sandbox.fetch = (url) => { seen = String(url); return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ items: [] }) }); };
+        try {
+            await new TelegramMusicProvider().searchTracks('Ebi');
+            assert(seen && seen.indexOf('/api/telegram?query=') !== -1, 'telegram relay URL, got ' + seen);
+            assert(seen.indexOf('apify.com') === -1 && seen.indexOf('token=') === -1 && seen.indexOf('apify_api_') === -1, 'no Apify/token in browser URL');
+        } finally { sandbox.fetch = prev; }
+    });
+
+    await test('telegram: Persian query ابی flows through variant system', () => {
+        const p = new TelegramMusicProvider();
+        assert((p.preferredQueryKinds || []).indexOf('original') !== -1, 'original kind preferred (one Apify run per search)');
+        const variants = buildSearchVariants('ابی');
+        assert(variants.length >= 2, 'Persian query yields variants: ' + JSON.stringify(variants));
+    });
+
+    await test('telegram: mediaAttachments parsing — audio kept, signed CDN URL preserved', () => {
+        const t = new TelegramMusicProvider()._toTrack(telegramSample);
+        assert(t, 'normalized from audio attachment');
+        assert(t.provider === 'telegram' && t.sourceType === 'telegram-media', 'provider + sourceType');
+        assert(t.playbackMode === 'html5-audio', 'html5-audio playback mode');
+        assert(t.title === 'Ebi & Shahin Najafi – Shahrah (Music)' && t.artist === 'Ebi & Shahin Najafi', 'caption kept as honest title, artist parsed');
+        assert(t.audioUrl === telegramSample.mediaAttachments[1].url, 'original signed CDN URL preserved verbatim');
+        assert(t.audioUrl.indexOf('telesco.pe') !== -1 && t.audioUrl.indexOf('token=') !== -1, 'provider CDN + signed token intact');
+        assert(t.playable === true && MusicSearch.looksPlayableUrl(t.audioUrl) === true, 'ogg audio is playable');
+        assert(t.externalUrl === 'https://t.me/RadioJavan/35257', 't.me permalink');
+        assert(t.metadata.telegram.channel === 'RadioJavan' && t.metadata.telegram.messageId === '35257', 'channel + messageId');
+        assert(t.metadata.telegram.publishedAt === telegramSample.publishedAt && t.metadata.telegram.fileName === 'shahrah.ogg', 'publishedAt + fileName');
+    });
+
+    await test('telegram: audio-only filtering — photo/video dropped, document with audio mime kept', () => {
+        const p = new TelegramMusicProvider();
+        const mixed = {
+            channel: 'RadioJavan', id: 1,
+            mediaAttachments: [
+                { type: 'photo', url: 'https://cdn1.telesco.pe/file/p.jpg' },
+                { type: 'video', url: 'https://cdn1.telesco.pe/file/v.mp4' },
+                { type: 'document', url: 'https://cdn1.telesco.pe/file/song.mp3', mimeType: 'audio/mpeg', fileName: 'song.mp3' }
+            ]
+        };
+        const t = p._toTrack(mixed);
+        assert(t && t.audioUrl.indexOf('song.mp3') !== -1, 'document with audio mime kept');
+        const photoOnly = { channel: 'RadioJavan', id: 2, mediaAttachments: [{ type: 'photo', url: 'https://cdn1.telesco.pe/file/p2.jpg' }] };
+        assert(p._toTrack(photoOnly) === null, 'photo-only post dropped');
+        assert(p._toTrack({ channel: 'X', id: 3 }) === null, 'no attachments dropped');
+    });
+
+    await test('telegram: failure isolation — 500 / timeout / malformed do not break rjavan', async () => {
+        const prev = sandbox.fetch;
+        const rj = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ mp3s: [{ id: '1', title: 'Hamin Khoobe', artist: 'Ebi', link: 'https://host1.media-rj.com/media/mp3/mp3-256/52642-becdc8d090175a7.mp3', duration: 240 }] }) });
+        const run = async (fetchFn, timeoutCfg) => {
+            sandbox.fetch = fetchFn;
+            const M = new MusicProviderManager(Object.assign({ poolLimit: 3, cacheTtlMs: 60000, deadlineMs: 3000 }, timeoutCfg || {}));
+            M.registerProvider(new CodeBazanRjavanProvider());
+            M.registerProvider(new TelegramMusicProvider());
+            return M.searchOthers('Ebi', buildCtx('Ebi'), buildSearchVariants('Ebi').slice(0, 3), 'nope');
+        };
+        // 500
+        let out = await run((url, init) => {
+            const u = String(url);
+            if (u.indexOf('/api/telegram') !== -1) return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) });
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            return rj();
+        });
+        assert(out.length >= 1, 'rjavan survives telegram 500');
+        // timeout
+        out = await run((url, init) => {
+            const u = String(url);
+            if (u.indexOf('/api/telegram') !== -1) return new Promise(() => {});
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            return rj();
+        }, { timeoutMs: { telegram: 60 } });
+        assert(out.length >= 1, 'rjavan survives telegram timeout');
+        // malformed JSON
+        out = await run((url, init) => {
+            const u = String(url);
+            if (u.indexOf('/api/telegram') !== -1) return Promise.resolve({ ok: true, status: 200, json: () => Promise.reject(new Error('bad json')) });
+            if (init && init.method === 'HEAD') return Promise.resolve({ status: 206, headers: { get: () => 'audio/mpeg' } });
+            return rj();
+        });
+        assert(out.length >= 1, 'rjavan survives malformed telegram JSON');
+        sandbox.fetch = prev;
+    });
+
+    await test('telegram: empty / non-array items → [] (no crash)', async () => {
+        const prev = sandbox.fetch;
+        sandbox.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ items: [] }) });
+        try {
+            const out = await new TelegramMusicProvider().searchTracks('Ebi');
+            assert(Array.isArray(out) && out.length === 0, 'empty items → empty tracks');
+            sandbox.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ items: 'nope' }) });
+            const out2 = await new TelegramMusicProvider().searchTracks('Ebi');
+            assert(Array.isArray(out2) && out2.length === 0, 'malformed items array handled gracefully');
+        } finally { sandbox.fetch = prev; }
+    });
+
+    await test('telegram: dedupe — telegram + rjavan same song merge, rjavan primary', () => {
+        const MS = sandbox.window.MusicSearch;
+        const tg = { title: 'Hamin Khoobe', artist: 'Ebi', provider: 'telegram', playableUrl: 'https://cdn1.telesco.pe/file/a.ogg?token=x', audioEvidence: true, playbackMode: 'html5-audio', sourceType: 'telegram-media' };
+        const rj = { title: 'Hamin Khoobe', artist: 'Ebi', provider: 'codebazan-rjavan', playableUrl: 'https://host1.media-rj.com/media/mp3/mp3-256/52642-becdc8d090175a7.mp3', audioEvidence: true, playbackMode: 'html5-audio', sourceType: 'direct-audio' };
+        assert(MS.dedupeKeyFor(tg) === MS.dedupeKeyFor(rj), 'same normalized artist|title key');
+        const merged = MS.manager._mergeDedupe([tg, rj], ['codebazan-rjavan', 'telegram']);
+        assert(merged.length === 1, 'one result after dedupe');
+        const r = merged[0];
+        assert(r.provider === 'codebazan-rjavan', 'rjavan primary over telegram');
+        assert(r.playbackMode === 'html5-audio' && r.sourceType === 'direct-audio', 'primary source controls playback mode/sourceType');
+    });
+
+    await test('telegram: MAX_RESULTS respected — 60 relevant tracks capped at 50', () => {
+        const tracks = [];
+        for (let i = 0; i < 60; i++) {
+            tracks.push({ title: 'Track ' + i, artist: 'Ebi', provider: 'telegram', playableUrl: 'https://cdn1.telesco.pe/file/t' + i + '.ogg?token=x', audioEvidence: true });
+        }
+        const out = rankF(tracks, buildCtx('Ebi'));
+        assert(out.rawCount === 60, 'raw count 60');
+        assert(out.results.length === 50, 'capped at MAX_RESULTS 50, got ' + out.results.length);
+    });
+
+    await test('youtube: embed track is playable, bare metadata-only track is not', () => {
+        const yt = new YouTubeProvider()._toTrack(youtubeSample);
+        assert(isTrackPlayable(yt) === true, 'embed track playable');
+        const bare = { title: 'Something', artist: 'X', sourceType: 'youtube' };
+        assert(isTrackPlayable(bare) === false, 'bare metadata-only not playable');
+        assert(isTrackPlayable({ title: 'A', playableUrl: 'https://x/a.mp3' }) === true, 'audio URL playable');
+    });
+
+    await test('youtube: embed track survives rankAndFilter as playable', () => {
+        const yt = new YouTubeProvider()._toTrack(youtubeSample);
+        assert(yt, 'normalized');
+        const out = rankF([yt], buildCtx('hamin khoobe'));
+        assert(out.results.length === 1 && out.playableCount === 1, 'embed track ranked as playable');
+    });
+
+    await test('player: youtube-embed tracks classify + degrade gracefully without DOM', async () => {
+        const P = new Player();
+        const yt = { title: 'Hamin Khoobe', playableUrl: null, playbackMode: 'youtube-embed', metadata: { youtube: { videoId: 'AbC123xyz' } } };
+        assert(P._isYoutubeTrack(yt) === true, 'youtube-embed classified');
+        const audio = { title: 'X', playableUrl: 'https://x/a.mp3' };
+        assert(P._isYoutubeTrack(audio) === false, 'audio track not youtube');
+        assert(P._currentTime() === 0, 'currentTime accessor safe');
+        const ok = await P.loadTrack(yt, { autoplay: false });
+        assert(ok === false && P.error === 'YouTube player unavailable', 'graceful error without DOM/YT API');
+        assert(P._mode === 'audio', 'mode reset after failure');
+        P.setQueue([yt, audio], 0);
+        assert(P.queue.length === 2, 'queue keeps youtube + audio tracks');
+        assert(P.addToQueue({ title: 'B', playableUrl: null }) === false, 'bare track still rejected');
+        P.destroy();
+    });
+
+    await test('secrets: no key/token literals in code or relays; no media proxying', () => {
+        const ms = fs.readFileSync('music-search.js', 'utf8');
+        assert(ms.indexOf('apify_api_') === -1 && ms.indexOf('AIza') === -1, 'no secret literals in provider code');
+        const tg = fs.readFileSync('api/telegram.js', 'utf8');
+        assert(tg.indexOf('APIFY_API_TOKEN') !== -1 && tg.indexOf('apify_api_') === -1, 'relay reads env name, never a literal token');
+        assert(tg.indexOf('process.env.APIFY_API_TOKEN') !== -1, 'token read from server env only');
+        assert(tg.indexOf('cdn1.telesco') === -1 && tg.indexOf('cdn.telegram') === -1, 'relay never fetches/proxies media (only the Apify actor API)');
+        assert(tg.indexOf('run-sync-get-dataset-items') !== -1, 'relay only calls the Apify actor run endpoint');
+        assert(tg.indexOf('audio/mpeg') === -1, 'relay never serves an audio content-type');
+        const yt = fs.readFileSync('api/youtube.js', 'utf8');
+        assert(yt.indexOf('YOUTUBE_API_KEY') !== -1 && yt.indexOf('AIza') === -1, 'youtube relay env name only');
+    });
+
+    await test('telegram: no MP3 proxying — audio URL is provider CDN, never the relay', () => {
+        const t = new TelegramMusicProvider()._toTrack(telegramSample);
+        assert(t.audioUrl.indexOf('telesco.pe') !== -1 && t.audioUrl.indexOf('/api/telegram') === -1, 'audio stays on Telegram CDN');
+    });
 
     console.log('\nResults:', passes, 'passed,', failures, 'failed');
     process.exit(failures ? 1 : 0);

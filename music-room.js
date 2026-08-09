@@ -894,11 +894,12 @@
             card.appendChild(art);
             const body = el('div', 'music-card-body');
             body.appendChild(el('div', 'music-card-title', track.title || 'Untitled'));
-            body.appendChild(el('div', 'music-card-meta', [track.artist, track.source].filter(Boolean).join(' · ') || 'Unknown artist'));
+            const cardIsYt = !!(track.playbackMode === 'youtube-embed' || (track.metadata && track.metadata.youtube && track.metadata.youtube.playbackMode === 'youtube-embed'));
+            body.appendChild(el('div', 'music-card-meta', [track.artist, track.source, cardIsYt ? '▶ Video playback' : null].filter(Boolean).join(' · ') || 'Unknown artist'));
             if (track.duration) body.appendChild(el('div', 'music-card-dur', fmtTime(track.duration)));
             card.appendChild(body);
             const activate = () => {
-                if (track.playableUrl) {
+                if (this._isPlayableTrack(track)) {
                     this.player.setQueue([track], 0);
                     this.player.playIndex(0).then(() => {
                         if (o.progress != null && track.resumeAt) this.player.seek(track.resumeAt);
@@ -924,7 +925,7 @@
             }
             if (!list || !list.length) return;
             const frag = document.createDocumentFragment();
-            list.forEach((track) => frag.appendChild(this._buildRow(track, { playable: !!track.playableUrl })));
+            list.forEach((track) => frag.appendChild(this._buildRow(track, { playable: this._isPlayableTrack(track) })));
             box.appendChild(frag);
         }
 
@@ -933,7 +934,17 @@
             return !!(c && track && (c.playableUrl === track.playableUrl || (c.dedupeKey && c.dedupeKey === track.dedupeKey)));
         }
 
+        // A result is playable if it has a real audio URL or is a YouTube
+        // embed track (the player switches to the official IFrame mode).
+        _isPlayableTrack(t) {
+            if (!t) return false;
+            if (t.playableUrl) return true;
+            const M = window.MusicSearch;
+            return !!(M && typeof M.isTrackPlayable === 'function' && M.isTrackPlayable(t));
+        }
+
         _favToTrack(f) {
+            const meta = f.metadata || null;
             return {
                 title: f.title || 'Untitled',
                 artist: f.artist || null,
@@ -942,7 +953,11 @@
                 playableUrl: f.playable_url,
                 artworkUrl: f.artwork_url,
                 duration: f.duration,
-                dedupeKey: (f.metadata && f.metadata.dedupeKey) || f.playable_url
+                // Round-trip the playback mode + provider metadata so YouTube
+                // embed / Telegram tracks keep working from the library.
+                playbackMode: (meta && meta.playbackMode) || null,
+                metadata: meta,
+                dedupeKey: (meta && meta.dedupeKey) || f.playable_url
             };
         }
 
@@ -967,7 +982,8 @@
             const titleEl = el('div', 'music-result-title', track.title || 'Untitled');
             titleEl.dir = 'auto'; // Persian titles render RTL, Latin LTR
             info.appendChild(titleEl);
-            const meta = [track.artist, track.source].filter(Boolean).join(' · ');
+            const isYt = !!(track.playbackMode === 'youtube-embed' || (track.metadata && track.metadata.youtube && track.metadata.youtube.playbackMode === 'youtube-embed'));
+            const meta = [track.artist, track.source, isYt ? '▶ Video playback' : null].filter(Boolean).join(' · ');
             const metaLine = el('div', 'music-result-meta', meta || 'Unknown artist');
             metaLine.dir = 'auto';
             if (track.duration) metaLine.textContent += ' · ' + fmtTime(track.duration);
@@ -975,7 +991,7 @@
             if (o.addedBy) info.appendChild(o.addedBy);
             row.appendChild(info);
 
-            const playable = o.playable !== false && !!track.playableUrl;
+            const playable = o.playable !== false && this._isPlayableTrack(track);
             const playBtn = el('button', 'music-result-play' + (playable ? '' : ' disabled'), playable ? '▶' : '⛔');
             playBtn.title = playable ? 'Play' : 'Not playable here';
             playBtn.setAttribute('aria-label', playable ? 'Play' : 'Not playable');
@@ -1020,7 +1036,7 @@
         }
 
         _playTrack(track) {
-            const playable = this.results.filter((t) => t.playableUrl);
+            const playable = this.results.filter((t) => this._isPlayableTrack(t));
             const idx = playable.findIndex((t) => t === track || t.dedupeKey === track.dedupeKey);
             this.player.setQueue(playable, idx < 0 ? 0 : idx);
             this.player.playIndex(this.player.index);
@@ -1072,7 +1088,7 @@
 
         _playNext(track) {
             const p = this.player;
-            if (!track || !track.playableUrl) return;
+            if (!track || !this._isPlayableTrack(track)) return;
             const at = p.index >= 0 ? p.index + 1 : p.queue.length;
             p.queue.splice(at, 0, track);
             p._rebuildOrder();

@@ -2,7 +2,7 @@
  *
  * Strategy (Phase 3, additive — the previous file only handled
  * notifications and had no caching at all):
- *   - Versioned cache ("lovehub-v2"). Bump the version to invalidate.
+ *   - Versioned cache ("lovehub-v3"). Bump the version to invalidate.
  *   - PRECACHE on install: the app shell (HTML, CSS, JS, images, icons).
  *   - STATIC ASSETS (same-origin css/js/png/webp/svg): cache-first with
  *     network fallback + background refresh, so repeat visits are instant
@@ -14,7 +14,7 @@
  *     the push handler is still a stub until VAPID is wired up.
  */
 
-const CACHE_NAME = 'lovehub-v2';
+const CACHE_NAME = 'lovehub-v3';
 const PRECACHE_URLS = [
     './',
     './index.html',

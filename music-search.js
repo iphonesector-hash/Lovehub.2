@@ -71,7 +71,7 @@
 
     // Phase 6 — multi-provider management.
     const PROVIDER_TIMEOUT_MS = 8000;      // per-provider network timeout
-    const MANAGER_DEADLINE_MS = 6000;      // searchOthers overall deadline (ms)
+    const MANAGER_DEADLINE_MS = 15000;     // searchOthers overall deadline (ms). Raised in Phase 12 so Telegram/Apify sync runs (~5-15s) can complete; the provider pool is concurrent (fast providers are never delayed) and relay CDN + provider/searchSmart caches keep repeat searches fast.
     const POOL_LIMIT = 3;                  // bounded provider concurrency
     const CACHE_TTL_MS = 60000;            // provider search cache TTL (ms)
     const CACHE_MAX = 200;                 // provider search cache entry cap
@@ -87,6 +87,7 @@
         'internet-archive': 100,
         'deezer': 98,
         'youtube': 95,
+        'telegram': 94,
         'melobit': 90,
         'ahangify': 80,
         'melodify': 70,
@@ -98,6 +99,7 @@
         'internet-archive': true,
         'deezer': true,
         'youtube': true,
+        'telegram': true,
         'melobit': true,
         'ahangify': true,
         'melodify': true,
@@ -335,6 +337,18 @@
         return AUDIO_EXT.has(m[1].toLowerCase());
     }
 
+    // A result is "playable" if it has a real audio URL OR is a YouTube embed
+    // track (playbackMode 'youtube-embed' with a valid videoId) — the player
+    // switches to YouTube's official IFrame mode for those. A bare
+    // metadata-only item is never treated as playable.
+    function isTrackPlayable(t) {
+        if (!t) return false;
+        if (t.playableUrl && looksPlayableUrl(t.playableUrl)) return true;
+        if (t.playbackMode === 'youtube-embed'
+            && t.metadata && t.metadata.youtube && t.metadata.youtube.videoId) return true;
+        return false;
+    }
+
     // Optional live check: HEAD the stream (fall back to a byte-range GET
     // whose body is immediately cancelled) and confirm the server answers
     // with a 2xx/416 status and an audio content type.
@@ -516,6 +530,7 @@
         'internet-archive': 'Internet Archive',
         'deezer': 'Deezer',
         'youtube': 'YouTube',
+        'telegram': 'Telegram',
         'melobit': 'Melobit',
         'ahangify': 'Ahangify',
         'melodify': 'Melodify',
@@ -576,6 +591,7 @@
             playable,
             downloadable: playable && m.downloadable !== false,
             sourceType: m.sourceType || 'stream',
+            playbackMode: m.playbackMode || 'html5-audio',
             metadata: m,
             score: null,
             sources: [],
@@ -616,7 +632,7 @@
             .map((t) => ({ track: t, ...scoreTrack(t, ctx) }))
             .sort((a, b) => b.score - a.score);
         const relevant = scored.filter((s) => s.score >= RELEVANCE_MIN);
-        const playable = relevant.filter((s) => s.track.playableUrl && looksPlayableUrl(s.track.playableUrl));
+        const playable = relevant.filter((s) => isTrackPlayable(s.track));
         const results = playable.slice(0, MAX_RESULTS).map((s) => {
             if (s.track) s.track._score = Math.round(s.score);
             return s.track;
@@ -870,6 +886,7 @@
     function rjavanRelayBase() { return relayBase('/api/rjavan'); }
     function deezerRelayBase() { return relayBase('/api/deezer'); }
     function youtubeRelayBase() { return relayBase('/api/youtube'); }
+    function telegramRelayBase() { return relayBase('/api/telegram'); }
 
     // -----------------------------------------------------------------------
     // CodeBazan → Radio Javan — keyless, CORS-open search that returns direct
@@ -1228,9 +1245,9 @@
     //
     // The official API returns METADATA ONLY — no audio URLs. Results are
     // marked sourceType 'youtube' / playbackMode 'youtube-embed' and are NOT
-    // playable as <audio> (playable=false) until the embed playback UI ships.
-    // Playback will use YouTube's own IFrame player — never a rip/proxy.
-    // Legal status: 'unknown' (metadata + official embed only).
+    // playable through YouTube's own IFrame player (embed UI mode).
+    // Never ripped, proxied or downloaded. Legal status: 'unknown'
+    // (metadata + official embed only).
     // -----------------------------------------------------------------------
     class YouTubeProvider extends MusicSearchProvider {
         constructor() {
@@ -1241,7 +1258,7 @@
                 authRequired: true,
                 keyEnv: 'YOUTUBE_API_KEY',
                 docsUrl: 'https://developers.google.com/youtube/v3/docs/search/list',
-                notes: 'Official YouTube Data API v3 (search/metadata only). YOUTUBE_API_KEY lives server-side in the Vercel relay. No audio extraction; playback via official IFrame embed when UI support ships.'
+                notes: 'Official YouTube Data API v3 (search/metadata only). YOUTUBE_API_KEY lives server-side in the Vercel relay. No audio extraction or ripping — playback uses YouTube\'s official IFrame embed (playbackMode youtube-embed).'
             };
         }
 
@@ -1272,10 +1289,23 @@
             if (!s || typeof s !== 'object') return null;
             const videoId = s.videoId || s.id || null;
             if (!videoId) return null;
-            const title = String(s.title || '').trim().slice(0, 200) || 'Untitled';
-            const artist = s.channelTitle ? String(s.channelTitle).trim().slice(0, 200) : null;
             const videoUrl = 'https://www.youtube.com/watch?v=' + encodeURIComponent(videoId);
             const duration = Number(s.durationSeconds);
+            const rawTitle = String(s.title || '').trim();
+            // Parse "Artist — Title" style titles so artist/title match
+            // other providers (cross-provider dedupe + relevance).
+            const parsed = rawTitle.match(/^(.+?)\s+[\u2013\u2014\u2015-]\s+(.+)$/);
+            let artist = null;
+            let title = rawTitle;
+            if (parsed) {
+                artist = String(parsed[1]).trim().slice(0, 200) || null;
+                title = String(parsed[2]).trim();
+            } else if (s.channelTitle) {
+                artist = String(s.channelTitle).trim().slice(0, 200);
+            }
+            // Strip descriptive tags like "(Official Video)" / "[Lyrics]" for
+            // cleaner titles and cross-provider dedupe keys.
+            title = title.replace(/\s*[\(\[]([^)\]]*)[\)\]]\s*$/, '').trim().slice(0, 200) || 'Untitled';
             const t = normalizeTrack({
                 id: videoId,
                 title,
@@ -1286,17 +1316,16 @@
                 audioUrl: null,
                 streamUrl: null,
                 externalUrl: videoUrl
-            }, { id: this.id, label: this.name, sourceType: 'youtube', downloadable: false });
+            }, { id: this.id, label: this.name, sourceType: 'youtube', downloadable: false, playbackMode: 'youtube-embed' });
             if (t) {
-                // Explicitly NOT an <audio>-playable source: keep playable false
-                // so the existing playable filter/player never tries to load it
-                // as an MP3. Embed playback is a future UI mode.
-                t.playable = false;
-                t.audioEvidence = false;
+                // Playable through YouTube's official IFrame player (not as an
+                // <audio> stream) once the embed UI mode is active.
+                t.playable = true;
+                t.playbackMode = 'youtube-embed';
                 t.metadata = Object.assign(t.metadata || {}, {
                     youtubeId: videoId,
                     channelId: s.channelId || null,
-                    channelTitle: artist,
+                    channelTitle: s.channelTitle || artist,
                     publishedAt: s.publishedAt || null,
                     kind: s.kind || 'youtube#video',
                     artist_farsi: null,
@@ -1305,7 +1334,7 @@
                 t.metadata.youtube = {
                     videoId,
                     channelId: s.channelId || null,
-                    channelTitle: artist,
+                    channelTitle: s.channelTitle || artist,
                     publishedAt: s.publishedAt || null,
                     thumbnail: s.thumbnail || null,
                     kind: s.kind || 'youtube#video',
@@ -1321,6 +1350,126 @@
     // MusicProviderManager — central registry, priorities, timeouts, cache,
     // failure isolation, cross-provider dedupe and playback fallback.
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Telegram — public Persian-music channels via the hosted Apify actor
+    // (crawlerbros/telegram-public-channels-scraper), reached through the
+    // same-origin Vercel relay (api/telegram.js). The APIFY_API_TOKEN stays
+    // server-side; until it is configured the relay returns 503
+    // APIFY_API_TOKEN_NOT_CONFIGURED (isolated per-provider failure).
+    //
+    // The actor searches WITHIN a curated list of verified public channels
+    // (no global Telegram search exists). Only audio attachments are kept;
+    // their URLs are Telegram's own signed CDN URLs (cdn*.telesco.pe/file/
+    // ...?token=...) — temporary, intended for immediate HTML5 playback,
+    // NEVER proxied, cached, re-hosted or permanently stored by LoveHub.
+    // sourceType 'telegram-media', playbackMode 'html5-audio'.
+    // Legal status: 'unknown' (indexes public posts from official channels;
+    // audio stays provider-direct).
+    // -----------------------------------------------------------------------
+    class TelegramMusicProvider extends MusicSearchProvider {
+        constructor() {
+            super('Telegram', 'telegram');
+            this.preferredQueryKinds = ['original'];
+            this.legal = {
+                status: 'unknown',
+                authRequired: true,
+                keyEnv: 'APIFY_API_TOKEN',
+                docsUrl: 'https://apify.com/crawlerbros/telegram-public-channels-scraper',
+                notes: 'Hosted Apify Telegram scraper via same-origin Vercel relay (JSON metadata only). Searches verified public Persian-music channels; audio stays on Telegram CDN (telesco.pe, signed temporary URLs) — never proxy/cache/re-host. Terms not independently verified.'
+            };
+        }
+
+        async searchTracks(query) {
+            const q = sanitizeQuery(query);
+            if (!q) return [];
+            const json = await fetchJson(
+                telegramRelayBase() + '?query=' + encodeURIComponent(q),
+                this.timeoutMs
+            );
+            const items = (json && Array.isArray(json.items)) ? json.items : [];
+            return items.map((s) => this._toTrack(s)).filter(Boolean);
+        }
+
+        // No direct track lookup exists for Telegram (the actor is
+        // search-only) — the contract method returns null rather than
+        // inventing an unsupported API.
+        async getTrack() { return null; }
+
+        // Audio-only filtering: keep attachments that are explicitly audio,
+        // carry an audio/* mime type, or end in a known audio extension.
+        _isAudioAttachment(a) {
+            if (!a || typeof a !== 'object') return false;
+            const type = String(a.type || '').toLowerCase();
+            const mime = String(a.mimeType || a.mime_type || '').toLowerCase();
+            if (type === 'audio') return true;
+            if (mime && mime.indexOf('audio/') === 0) return true;
+            const m = String(a.url || a.fileUrl || '').match(/\.([a-z0-9]{2,5})(?:[?#]|$)/);
+            return !!(m && AUDIO_EXT.has(m[1]));
+        }
+
+        // First non-empty line of the post caption becomes the title; a
+        // leading "Artist — Title" pattern is parsed for clean dedupe.
+        _titleFromText(text, channel, msgId) {
+            const line = String(text || '').split('\n')[0].trim();
+            if (line) return line.slice(0, 200);
+            return (channel ? channel : 'Telegram') + ' audio' + (msgId ? ' #' + msgId : '');
+        }
+
+        // Map one Apify post into the unified LoveHub track shape. Preserves
+        // the original signed Telegram CDN URL untouched. Unknown fields stay
+        // null; original post metadata is kept in metadata.telegram.
+        _toTrack(item) {
+            if (!item || typeof item !== 'object') return null;
+            const atts = Array.isArray(item.mediaAttachments) ? item.mediaAttachments : [];
+            const audio = atts.find((a) => this._isAudioAttachment(a));
+            if (!audio) return null;
+            const url = String(audio.url || audio.fileUrl || audio.mediaUrl || '').trim();
+            if (!/^https?:\/\//i.test(url)) return null;
+            const channel = String(item.channel || item.channelUsername || '').trim() || null;
+            const msgId = item.id != null ? String(item.id)
+                : (item.messageId != null ? String(item.messageId) : null);
+            const text = String(item.text || item.caption || '').trim();
+            const title = this._titleFromText(text, channel, msgId);
+            let artist = null;
+            const parsed = text.match(/^(.+?)\s+[\u2013\u2014\u2015-]\s+(.+)$/);
+            if (parsed) artist = String(parsed[1]).trim().slice(0, 200);
+            const published = item.publishedAt || item.date || item.published_at || null;
+            const t = normalizeTrack({
+                id: msgId ? (channel ? channel + '/' + msgId : msgId) : url,
+                title,
+                artist,
+                album: null,
+                duration: null,
+                cover: null,
+                audioUrl: url,
+                streamUrl: url,
+                externalUrl: (channel && msgId) ? 'https://t.me/' + encodeURIComponent(channel) + '/' + encodeURIComponent(msgId) : null
+            }, { id: this.id, label: this.name, sourceType: 'telegram-media', downloadable: false, playbackMode: 'html5-audio' });
+            if (t) {
+                t.metadata = Object.assign(t.metadata || {}, {
+                    telegramId: msgId,
+                    channel,
+                    text,
+                    publishedAt: published,
+                    fileName: audio.fileName || audio.name || null,
+                    mimeType: audio.mimeType || audio.mime_type || null,
+                    mediaType: audio.type || null,
+                    artist_farsi: null,
+                    song_farsi: null
+                });
+                t.metadata.telegram = {
+                    channel,
+                    messageId: msgId,
+                    publishedAt: published,
+                    text,
+                    fileName: audio.fileName || audio.name || null,
+                    mimeType: audio.mimeType || audio.mime_type || null
+                };
+            }
+            return t;
+        }
+    }
+
     class MusicProviderManager {
         constructor(config) {
             const cfg = config || {};
@@ -1574,6 +1723,8 @@
                     entry.providerId = pid || entry.providerId;
                     entry.dedupeKey = t.dedupeKey || entry.dedupeKey;
                     entry.audioEvidence = t.audioEvidence || entry.audioEvidence;
+                    entry.playbackMode = t.playbackMode || entry.playbackMode;
+                    entry.sourceType = t.sourceType || entry.sourceType;
                     entry.artist_farsi = t.artist_farsi || entry.artist_farsi;
                     entry.song_farsi = t.song_farsi || entry.song_farsi;
                     if (t.metadata && (t.metadata.artist_farsi || t.metadata.rjId)) {
@@ -1600,9 +1751,12 @@
                 new AudiusProvider(),
                 new DeezerProvider(),
                 new YouTubeProvider(),
+                new TelegramMusicProvider(),
                 new DirectAudioProvider()
             ];
-            this.manager = new MusicProviderManager();
+            // Telegram's Apify sync runs take ~5-15s — give it its own longer
+            // per-provider timeout; every other provider keeps the default.
+            this.manager = new MusicProviderManager({ timeoutMs: { telegram: 22000 } });
             this.providers.forEach((p) => this.manager.registerProvider(p));
             this.manager.disable('direct-audio'); // reserved for a future source
             this._smartCache = new Map(); // short-lived searchSmart result cache
@@ -1753,7 +1907,12 @@
             // audio is not offered with a Play button.
             if (out.results.length && typeof fetch === 'function') {
                 const top = out.results.slice(0, PROBE_LIMIT);
-                const probes = await Promise.allSettled(top.map((t) => probePlayable(t.playableUrl)));
+                const probes = await Promise.allSettled(top.map((t) => {
+                    // YouTube embed tracks have no URL to probe — playback goes
+                    // through YouTube's own IFrame player (never rip/proxy).
+                    if (t.playbackMode === 'youtube-embed') return Promise.resolve({ ok: true });
+                    return probePlayable(t.playableUrl);
+                }));
                 const bad = new Set();
                 probes.forEach((r, i) => {
                     if (r.status === 'fulfilled' && r.value && r.value.ok === false) {
@@ -1801,5 +1960,8 @@
     window.MusicSearch.AudiusProvider = AudiusProvider;
     window.MusicSearch.DeezerProvider = DeezerProvider;
     window.MusicSearch.YouTubeProvider = YouTubeProvider;
+    window.MusicSearch.TelegramMusicProvider = TelegramMusicProvider;
+    window.MusicSearch.telegramRelayBase = telegramRelayBase;
+    window.MusicSearch.isTrackPlayable = isTrackPlayable;
     window.MusicSearch.DirectAudioProvider = DirectAudioProvider;
 })();
