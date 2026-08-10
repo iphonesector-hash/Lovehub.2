@@ -2074,6 +2074,200 @@ async function main() {
         assert(mr.indexOf('music-provider-badge') !== -1, 'badge element builder present');
     });
 
+    // =====================================================================
+    // Phase 13.5 — Music Room polish: functional controls + single player
+    // =====================================================================
+
+    await test('phase13.5: mini player only shows OUTSIDE the Music Room', () => {
+        const f = U.shouldShowMiniPlayer;
+        assert(typeof f === 'function', 'helper exported');
+        assert(f({ hasCurrent: true, page: 'music', npOpen: false }) === false, 'never inside Music Room');
+        assert(f({ hasCurrent: true, page: 'music', npOpen: true }) === false, 'never while Now Playing is open');
+        assert(f({ hasCurrent: true, page: 'home', npOpen: false }) === true, 'shows outside Music Room');
+        assert(f({ hasCurrent: true, page: 'chat', npOpen: false }) === true, 'shows on chat page');
+        assert(f({ hasCurrent: false, page: 'home', npOpen: false }) === false, 'nothing to show without a track');
+        assert(f({ hasCurrent: true, page: 'home', npOpen: true }) === false, 'never over the Now Playing overlay');
+    });
+
+    await test('phase13.5: volume + mute are engine-level (single source of truth)', async () => {
+        const P = new Player();
+        P.setVolume(0.4);
+        assert(P.volume === 0.4, 'setVolume applied');
+        assert(P.snapshot().volume === 0.4 && P.snapshot().muted === false, 'snapshot reflects volume');
+        assert(P.toggleMute() === true && P.volume === 0, 'mute zeroes volume');
+        assert(P.toggleMute() === false && P.volume === 0.4, 'unmute restores last volume');
+        P.setVolume(0);
+        assert(P.muted === true, 'zero volume marks muted');
+        assert(P.toggleMute() === false && P.volume === 0.4, 'unmute from zero restores 0.4');
+        P.setVolume(2);
+        assert(P.volume === 1, 'volume clamped to 1');
+        P.setVolume(-3);
+        assert(P.volume === 0, 'volume clamped to 0');
+        // Volume survives track switches (engine-level, not per-track).
+        P.setVolume(0.6);
+        await P.loadTrack({ title: 'A', playableUrl: 'https://x/a.mp3' }, { autoplay: false });
+        assert(P.volume === 0.6, 'volume persists across tracks');
+        P.destroy();
+    });
+
+    await test('phase13.5: Music Room + mini player share ONE player instance', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        assert(mr.indexOf('this.player = window.LoveHubMusicPlayer') !== -1, 'Music Room binds the global player');
+        assert(mr.indexOf('new MusicPlayerService(') === -1, 'Music Room never creates a second player');
+        assert(mr.indexOf('new Audio(') === -1, 'Music Room never creates a second <audio>');
+        const html = fs.readFileSync('index.html', 'utf8');
+        assert(html.indexOf('id="miniPlayer"') !== -1, 'one global mini player element only');
+        assert(html.split('miniPlayer').length === 2, 'no duplicate mini player markup');
+    });
+
+    await test('phase13.5: volume controls exist and are wired', () => {
+        const html = fs.readFileSync('index.html', 'utf8');
+        assert(html.indexOf('id="npVolume"') !== -1, 'volume slider present in Now Playing');
+        assert(html.indexOf('id="npMute"') !== -1 && html.indexOf('aria-label="Mute or unmute"') !== -1, 'mute button present + labelled');
+        assert(html.indexOf('id="npMore"') !== -1, 'More/options button present in NP header');
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        assert(mr.indexOf('_renderVolume()') !== -1 && mr.indexOf("toggleMute()") !== -1, 'volume UI wired to the player engine');
+        assert(mr.indexOf("safeSet('lovehub_music_volume_v1'") !== -1, 'volume persisted');
+        const sy = fs.readFileSync('src/icons/symbols.js', 'utf8');
+        assert(sy.indexOf('volumeMute') !== -1 && sy.indexOf('volumeLow') !== -1, 'volume icon states registered');
+    });
+
+    await test('phase13.5: no Music Room button lost the inventory', () => {
+        const html = fs.readFileSync('index.html', 'utf8');
+        const ids = ['heroPlay', 'heroPrev', 'heroNext', 'heroFav', 'heroShare', 'heroQueue', 'heroRange',
+            'npPlay', 'npPrev', 'npNext', 'npShuffle', 'npRepeat', 'npFav', 'npShare', 'npQueue',
+            'npEq', 'npSleep', 'npLyrics', 'npClose', 'npMute', 'npVolume', 'npMore',
+            'musicQueueBtn', 'musicQueueClear', 'musicQueueDone', 'musicQueueShuffle',
+            'musicSleepBtn', 'musicEqBtn', 'playBtn', 'miniNext', 'miniFav',
+            'musicSearchBtn', 'musicSearchClear'];
+        const missing = ids.filter((id) => html.indexOf('id="' + id + '"') === -1);
+        assert(missing.length === 0, 'all player/queue/search controls present: ' + (missing.join(',') || 'none missing'));
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        const wired = ids.filter((id) => mr.indexOf("getElementById('" + id + "')") === -1 && mr.indexOf('"' + id + '")') === -1);
+        assert(wired.length === 0, 'every control is referenced by the controller: ' + (wired.join(',') || 'none unwired'));
+    });
+
+
+
+
+    // =====================================================================
+    // Phase 13.6 — Music Room final UX: single player architecture
+    // =====================================================================
+
+    await test('phase13.6: mini player opens the Music Room (never the reverse)', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        assert(mr.indexOf("app.navigateTo('music')") !== -1, 'mini click navigates to the Music page');
+        assert(mr.indexOf('_pendingNpOpen = true') !== -1, 'Now Playing opens after arriving');
+        assert(mr.indexOf('_openNowPlaying()') !== -1, 'reveals the full player');
+        assert(mr.indexOf("mini.addEventListener('keydown'") !== -1, 'mini bar is keyboard accessible');
+        const html = fs.readFileSync('index.html', 'utf8');
+        assert(/id="miniPlayer"[^>]*role="button"/.test(html), 'mini bar exposed as a button');
+        assert(/id="miniPlayer"[^>]*tabindex="0"/.test(html), 'mini bar focusable');
+    });
+
+    await test('phase13.6: leaving the Music Room re-exposes the global mini player', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        assert(mr.indexOf('onPageChanged(page)') !== -1, 'page-change hook exists');
+        assert(mr.indexOf('_updateMiniPlayer()') !== -1, 'mini visibility refreshed on page change');
+        const f = U.shouldShowMiniPlayer;
+        assert(f({ hasCurrent: true, page: 'home', npOpen: false }) === true, 'mini visible outside Music Room while playing');
+        assert(f({ hasCurrent: true, page: 'music', npOpen: false }) === false, 'mini hidden inside Music Room');
+        assert(f({ hasCurrent: true, page: 'music', npOpen: true }) === false, 'mini hidden over Now Playing');
+    });
+
+    await test('phase13.6: playback state is preserved across Music Room transitions', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        const grab = (sig) => {
+            const i = mr.indexOf(sig);
+            assert(i > -1, sig + ' exists');
+            const bodyStart = mr.indexOf('{', i) + 1;
+            const bodyEnd = mr.indexOf('\n        //', i);
+            return mr.slice(bodyStart, bodyEnd > -1 ? bodyEnd : bodyStart + 4000);
+        };
+        ['_openNowPlaying()', '_closeNowPlaying(silent)', 'onPageOpen()', 'onPageChanged(page)'].forEach((sig) => {
+            const body = grab(sig);
+            assert(body.indexOf('.pause()') === -1, sig + ' never pauses');
+            assert(body.indexOf('.stop(') === -1, sig + ' never stops');
+            assert(body.indexOf('loadTrack(') === -1 && body.indexOf('new Audio(') === -1, sig + ' never reloads/recreates audio');
+        });
+    });
+
+    await test('phase13.6: every transport control reaches the single engine', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        const wires = [
+            ['npPlay', 'player.toggle()'], ['npPrev', 'player.previous()'], ['npNext', 'player.next()'],
+            ['npShuffle', 'player.toggleShuffle()'], ['npRepeat', 'player.cycleRepeat()'], ['npFav', 'toggleFavorite'],
+            ['npRange', 'player.seek('], ['npVolume', 'player.setVolume('], ['npMute', 'player.toggleMute()'],
+            ['npMore', '_openMoreMenu'], ['playBtn', 'player.toggle()'], ['miniNext', 'player.next()'],
+            ['miniFav', 'toggleFavorite']
+        ];
+        const dead = wires.filter((w) => {
+            const id = w[0]; const engine = w[1];
+            return mr.indexOf("getElementById('" + id + "')") === -1 || mr.indexOf(engine) === -1;
+        });
+        assert(dead.length === 0, 'unwired controls: ' + (dead.map((d) => d[0]).join(',') || 'none'));
+    });
+
+    await test('phase13.6: queue + more-menu actions are wired', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        ['_showQueue()', 'clearQueue()', 'removeFromQueue', '_playNext', 'addToQueue',
+            "'Play next'", "'Add to queue'", "'Save to shared songs'", "'Share with partner'",
+            "'Open source'", "'Remove from queue'"].forEach((s) =>
+            assert(mr.indexOf(s) !== -1, s + ' present'));
+    });
+
+    await test('phase13.6: no duplicate audio/player instance is ever created', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        assert(mr.indexOf('new Audio(') === -1, 'Music Room creates no <audio>');
+        assert(mr.indexOf('new MusicPlayerService(') === -1, 'Music Room creates no player instance');
+        const cr = fs.readFileSync('chat-rich.js', 'utf8');
+        assert(cr.indexOf('new MusicPlayerService(') === -1 && cr.indexOf('LoveHubMusicPlayer = new') === -1, 'chat-rich never instantiates a player');
+        assert(cr.indexOf('musicRoomOverlay') === -1, 'no legacy music overlay remains');
+        const mp = fs.readFileSync('music-player.js', 'utf8');
+        assert((mp.match(/new Audio\(/g) || []).length === 1, 'exactly one <audio> in the whole engine');
+        const html = fs.readFileSync('index.html', 'utf8');
+        assert(html.split('id="miniPlayer"').length === 2, 'one global mini player element');
+    });
+
+    await test('phase13.6: no horizontal overflow on iPhone viewports', () => {
+        const css = fs.readFileSync('music-room.css', 'utf8');
+        const big = [];
+        css.split('\n').forEach((line) => {
+            if (line.trim().startsWith('@media') || line.trim().startsWith('/*')) return;
+            const m = line.match(/min-width:\s*(\d+)px/);
+            if (m && Number(m[1]) > 320) big.push(line.trim());
+        });
+        assert(big.length === 0, 'no min-width larger than an iPhone viewport: ' + big.join(' | '));
+        assert(css.indexOf('overflow-x: hidden') !== -1, 'overflow clipped');
+        assert(css.indexOf('max-width: 100%') !== -1, 'page bounded to the viewport');
+    });
+
+    await test('phase13.6: light/dark themes stay functional via tokens', () => {
+        const css = fs.readFileSync('music-room.css', 'utf8');
+        assert(css.indexOf('var(--glass') !== -1 && css.indexOf('var(--text-secondary)') !== -1, 'surfaces use theme tokens');
+        assert(!/\.music-np-overlay\s*\{[^}]*background:\s*#[0-9a-fA-F]{3,6}/.test(css), 'NP overlay never hardcodes a color');
+        const app = fs.readFileSync('app.js', 'utf8');
+        assert(app.indexOf('applyTheme') !== -1, 'global theme engine intact');
+    });
+
+    await test('phase13.6: accessibility labels cover all interactive controls', () => {
+        const html = fs.readFileSync('index.html', 'utf8');
+        const start = html.indexOf('id="musicPage"');
+        const region = html.slice(start, start + 40000);
+        let m, re = /<button[^>]*>/g, bare = [];
+        while ((m = re.exec(region))) {
+            const tag = m[0];
+            const endTag = region.indexOf('</button>', m.index);
+            const rest = region.slice(m.index + tag.length, endTag > -1 ? endTag : m.index + tag.length);
+            const hasText = /[^<>\s]/.test(rest);
+            if (!/aria-label=/.test(tag) && !hasText) bare.push(tag.slice(0, 70));
+        }
+        assert(bare.length === 0, 'icon buttons missing aria-label: ' + bare.join(' | '));
+        assert(html.indexOf('aria-label="Seek"') !== -1 && html.indexOf('aria-label="Volume"') !== -1, 'sliders labelled');
+        assert(html.indexOf('aria-label="Mute or unmute"') !== -1 && html.indexOf('aria-label="Play or pause"') !== -1, 'transport labelled');
+        assert(html.indexOf('aria-label="Open Music Room"') !== -1, 'mini bar labelled');
+    });
+
     console.log('\nResults:', passes, 'passed,', failures, 'failed');
     process.exit(failures ? 1 : 0);
 }

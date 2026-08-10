@@ -78,6 +78,8 @@ export const ICONS = {
     sparkles: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3z"></path>' },
     pause: { viewBox: NS_VIEWBOX, filled: true, body: '<rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect>' },
     volume: { viewBox: NS_VIEWBOX, filled: false, body: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>' },
+    volumeLow: { viewBox: NS_VIEWBOX, filled: false, body: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>' },
+    volumeMute: { viewBox: NS_VIEWBOX, filled: false, body: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line>' },
     plus: { viewBox: NS_VIEWBOX, filled: false, body: '<line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>' },
     eraser: { viewBox: NS_VIEWBOX, filled: false, body: '<path d="M7 21a4 4 0 0 1-4-4c0-1.1.4-2.1 1.1-2.9l9.9-10.4a2.83 2.83 0 0 1 4 0l3.4 3.4a2.83 2.83 0 0 1 0 4l-10 10.6A4 4 0 0 1 9.8 21H7z"></path><line x1="2" y1="21" x2="22" y2="21"></line>' },
     undo: { viewBox: NS_VIEWBOX, filled: false, body: '<polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>' },

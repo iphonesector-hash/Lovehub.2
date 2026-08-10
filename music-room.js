@@ -123,6 +123,17 @@
         };
     }
 
+    // Phase 13 — the Music Room IS the main player. The global mini player is
+    // only a small controller for OUTSIDE the Music Room: it must never appear
+    // while the Music page (or its Now Playing overlay) is on screen.
+    function shouldShowMiniPlayer(opts) {
+        const o = opts || {};
+        if (!o.hasCurrent) return false;
+        if (o.page === 'music') return false;
+        if (o.npOpen) return false;
+        return true;
+    }
+
     // Extract a small palette from raw RGBA pixels via color-bin histogram.
     function samplePalette(pixels, w, h, count) {
         const need = count || 3;
@@ -197,6 +208,8 @@
             this._view = 'home'; // home | search | library
             this._libView = 'favorites';
             this._filter = 'all'; // all | songs | favorites | recent
+            this._npArtKey = null;
+            this._lastPersistedVol = null;
             this._query = '';
             this._mood = safeGet('lovehub_music_mood_v1', 'romantic');
             if (!MOODS[this._mood]) this._mood = 'romantic';
@@ -296,6 +309,9 @@
                 npLyricsPanel: document.getElementById('npLyricsPanel'),
                 npLyricsBody: document.getElementById('npLyricsBody'),
                 npError: document.getElementById('npError'),
+                npMute: document.getElementById('npMute'),
+                npVolume: document.getElementById('npVolume'),
+                npMore: document.getElementById('npMore'),
                 mini: document.getElementById('miniPlayer'),
                 miniArt: null,
                 miniTitle: null,
@@ -320,6 +336,13 @@
             this._renderSearchRecents();
             this._renderHero();
             this._updateMiniPlayer();
+            // Phase 13 — restore the saved volume so the engine, hero and
+            // mini player all start from the user's last setting.
+            const savedVol = safeGet('lovehub_music_volume_v1', null);
+            if (typeof savedVol === 'number' && isFinite(savedVol)) {
+                this.player.setVolume(savedVol);
+                this._lastPersistedVol = savedVol;
+            }
         }
 
         // -------------------------------------------------------------------
@@ -532,8 +555,11 @@
 
             const mini = this._els.mini;
             if (mini) {
-                mini.addEventListener('click', (e) => {
-                    if (e.target.closest('button')) return;
+                // Phase 13.6 — the mini player is a GATEWAY to the Music Room:
+                // tapping (or keyboard-activating) it opens the canonical Music
+                // page, never a second player. Playback state is untouched —
+                // it is the same MusicPlayerService, just revealed full-screen.
+                const openMusicRoomFromMini = () => {
                     const app = window.app;
                     if (!this.player.current) { if (app) app.navigateTo('music'); return; }
                     // Now Playing lives INSIDE #musicPage - if the Music page
@@ -544,6 +570,15 @@
                         return;
                     }
                     this._openNowPlaying();
+                };
+                mini.addEventListener('click', (e) => {
+                    if (e.target.closest('button')) return;
+                    openMusicRoomFromMini();
+                });
+                mini.addEventListener('keydown', (e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+                    e.preventDefault();
+                    openMusicRoomFromMini();
                 });
             }
             if (this._els.miniPlay) {
@@ -582,6 +617,26 @@
 
             // Now Playing controls
             if (this._els.npClose) this._els.npClose.addEventListener('click', () => this._closeNowPlaying());
+            if (this._els.npMore) {
+                this._els.npMore.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (this.player.current) this._openMoreMenu(this._els.npMore, this.player.current);
+                });
+            }
+            if (this._els.npMute) {
+                this._els.npMute.addEventListener('click', () => {
+                    this.player.toggleMute();
+                    this.showToast(this.player.muted ? 'Muted' : 'Unmuted');
+                    this._renderNowPlaying();
+                });
+            }
+            if (this._els.npVolume) {
+                let vDragging = false;
+                this._els.npVolume.addEventListener('pointerdown', () => { vDragging = true; });
+                this._els.npVolume.addEventListener('input', () => { if (vDragging) this.player.setVolume(Number(this._els.npVolume.value)); });
+                this._els.npVolume.addEventListener('pointerup', () => { vDragging = false; this.player.setVolume(Number(this._els.npVolume.value)); });
+                this._els.npVolume.addEventListener('pointercancel', () => { vDragging = false; });
+            }
             if (this._els.npPlay) this._els.npPlay.addEventListener('click', () => this.player.toggle());
             if (this._els.npPrev) this._els.npPrev.addEventListener('click', () => this.player.previous());
             if (this._els.npNext) this._els.npNext.addEventListener('click', () => this.player.next());
@@ -688,7 +743,7 @@
             else if (e.key === 'ArrowLeft') this.player.previous();
             else if (e.key === 'ArrowUp') { e.preventDefault(); this.player.setVolume(Math.min(1, this.player.volume + 0.05)); }
             else if (e.key === 'ArrowDown') { e.preventDefault(); this.player.setVolume(Math.max(0, this.player.volume - 0.05)); }
-            else if (e.key === 'm' || e.key === 'M') { this.player.setVolume(this.player.volume > 0 ? 0 : 0.8); }
+            else if (e.key === 'm' || e.key === 'M') { this.player.toggleMute(); this._renderNowPlaying(); }
             else if (e.key === 'Escape') this._closeNowPlaying();
         }
 
@@ -1280,7 +1335,7 @@
 
         _bindPlayer() {
             const p = this.player;
-            p.on('state', () => { this._renderHero(); this._renderQueue(); this._renderNowPlaying(); this._updateMiniPlayer(); if (this.visualizer) this.visualizer.setPlaying(p.playing && !!p.current); });
+            p.on('state', () => { this._renderVolume(); this._renderHero(); this._renderQueue(); this._renderNowPlaying(); this._updateMiniPlayer(); if (this.visualizer) this.visualizer.setPlaying(p.playing && !!p.current); });
             p.on('track', (s) => {
                 this._fallbackTriedUrls = new Set();
                 this._renderHero();
@@ -1430,6 +1485,16 @@
             const s = this.player.snapshot();
             const t = s.current;
             if (!t) { this._closeNowPlaying(); return; }
+            // Gentle artwork transition when the track changes.
+            const trackKey = (t.dedupeKey || t.playableUrl || t.title);
+            if (trackKey && trackKey !== this._npArtKey) {
+                this._npArtKey = trackKey;
+                if (this._els.npArt) {
+                    this._els.npArt.classList.remove('music-art-swap');
+                    void this._els.npArt.offsetWidth; // restart the animation
+                    this._els.npArt.classList.add('music-art-swap');
+                }
+            }
             if (this._els.npArt) {
                 if (t.artworkUrl) this._els.npArt.style.backgroundImage = 'url("' + esc(t.artworkUrl) + '")';
                 else this._els.npArt.style.backgroundImage = '';
@@ -1461,7 +1526,32 @@
                 this._els.npError.style.display = s.error ? '' : 'none';
                 this._els.npError.textContent = s.error || '';
             }
+            this._renderVolume();
             this._renderProgress();
+        }
+
+        // Phase 13 — volume UI: slider position, level-aware icon and mute
+        // state, all driven by the single player engine (no parallel state).
+        _renderVolume() {
+            const s = this.player.snapshot();
+            const v = Math.max(0, Math.min(1, s.volume || 0));
+            const slider = this._els.npVolume;
+            if (slider && document.activeElement !== slider) slider.value = String(v);
+            const mute = this._els.npMute;
+            if (!mute) return;
+            const silent = !!(s.muted || v === 0);
+            const ico = silent ? 'volumeMute' : (v < 0.5 ? 'volumeLow' : 'volume');
+            mute.innerHTML = icon(ico, 18);
+            mute.classList.toggle('on', silent);
+            mute.setAttribute('aria-pressed', String(silent));
+            mute.setAttribute('aria-label', silent ? 'Unmute' : 'Mute');
+            this._persistVolume(v);
+        }
+
+        _persistVolume(v) {
+            if (v === this._lastPersistedVol) return;
+            this._lastPersistedVol = v;
+            safeSet('lovehub_music_volume_v1', v);
         }
 
         // ---- Ambient artwork-reactive environment (18) ----
@@ -1735,7 +1825,9 @@
             if (!mini) return;
             const s = this.player.snapshot();
             const page = (window.app && window.app.currentPage) || 'home';
-            const show = !!s.current && page !== 'music' && !this._npOpen;
+            // The Music Room IS the main player: the global mini player is only
+            // a small controller for OUTSIDE the Music Room — never inside it.
+            const show = shouldShowMiniPlayer({ hasCurrent: !!s.current, page, npOpen: this._npOpen });
             mini.classList.toggle('show', show);
             if (!s.current) return;
 
@@ -1908,6 +2000,7 @@
         pushRecent,
         upsertContinue,
         favoriteToTrack,
+        shouldShowMiniPlayer,
         samplePalette,
         fmtTime,
         fmtRemaining,

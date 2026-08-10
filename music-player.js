@@ -72,6 +72,8 @@
             this.loading = false;
             this.error = null;
             this.volume = 0.8;
+            this.muted = false;       // last volume remembered for unmute
+            this._lastVolume = 0.8;
             this.shuffle = false;
             this.repeat = 'off'; // 'off' | 'all' | 'one'
             this._order = [];    // play-order of queue indices
@@ -336,7 +338,8 @@
                     ? (this._ytDuration || (this.current && this.current.duration) || 0)
                     : ((a && isFinite(a.duration) && a.duration > 0) ? a.duration : (this.current && this.current.duration) || 0),
                 time: this._mode === 'youtube' ? (this._ytTime || 0) : ((a && isFinite(a.currentTime)) ? a.currentTime : 0),
-                volume: this.volume
+                volume: this.volume,
+                muted: this.muted
             };
         }
 
@@ -449,9 +452,20 @@
         }
 
         setVolume(v) {
-            this.volume = Math.max(0, Math.min(1, Number(v) || 0));
-            if (this._audio) this._audio.volume = this.volume;
+            const n = Math.max(0, Math.min(1, Number(v) || 0));
+            this.volume = n;
+            if (n > 0) this._lastVolume = n;
+            this.muted = n === 0;
+            if (this._audio) this._audio.volume = n;
             this.emit('state', this.snapshot());
+        }
+
+        // Phase 13 — mute/unmute with last-volume restore (single source of
+        // truth: the engine remembers the volume, every UI just calls this).
+        toggleMute() {
+            if (this.muted || this.volume === 0) this.setVolume(this._lastVolume > 0 ? this._lastVolume : 0.8);
+            else this.setVolume(0);
+            return this.muted;
         }
 
         // ---- shuffle / repeat (Phase 5 Premium, additive) ----
