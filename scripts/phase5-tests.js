@@ -85,6 +85,73 @@ const T3 = { title: 'T3', artist: 'B3', playableUrl: 'https://x/c.mp3', dedupeKe
 const NO_URL = { title: 'Unavailable', artist: 'X', playableUrl: null, dedupeKey: 'id4' };
 
 async function main() {
+    // =====================================================================
+    // Phase 13.8 — header controls wiring + single corner mini player
+    // =====================================================================
+
+    await test('phase13.8: all three Music Room header buttons are wired', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        assert(mr.indexOf("getElementById('musicQueueBtn')") !== -1, 'queue header button referenced');
+        assert(mr.indexOf("this._els.queueBtn.addEventListener('click'") !== -1, 'queue header button opens the queue sheet');
+        assert(mr.indexOf("getElementById('musicSleepBtn')") !== -1, 'sleep header button referenced');
+        assert(mr.indexOf("this._els.sleepBtn.addEventListener('click'") !== -1, 'sleep header button has a click handler');
+        assert(mr.indexOf('_openSheet(this._els.sleepSheet)') !== -1 && mr.indexOf('_renderSleepSheet()') !== -1, 'sleep opens the sleep-timer sheet with options');
+        assert(mr.indexOf("getElementById('musicEqBtn')") !== -1, 'eq header button referenced');
+        assert(mr.indexOf("this._els.eqBtn.addEventListener('click'") !== -1, 'eq header button has a click handler');
+        assert(mr.indexOf('_openSheet(this._els.eqSheet)') !== -1, 'eq opens the equalizer sheet');
+        const html = fs.readFileSync('index.html', 'utf8');
+        ['musicSleepBtn', 'musicEqBtn', 'musicQueueBtn'].forEach((id) =>
+            assert(html.indexOf('id="' + id + '"') !== -1, id + ' present in the header'));
+    });
+
+    await test('phase13.8: mini player is the single compact corner controller above the AI FAB', () => {
+        const css = fs.readFileSync('music-room.css', 'utf8');
+        const i = css.indexOf('.mini-player {');
+        assert(i !== -1, 'mini-player override exists');
+        const block = css.slice(i, i + 400);
+        assert(block.indexOf('left: auto;') !== -1, 'no longer a full-width bottom bar (left auto)');
+        assert(block.indexOf('right: calc(16px + env(safe-area-inset-right, 0px))') !== -1, 'anchored to the right edge');
+        assert(block.indexOf('width: min(calc(100% - 32px), 320px)') !== -1, 'compact capped width');
+        assert(block.indexOf('bottom: calc(var(--safe-b) + 186px)') !== -1, 'floats above the FAB stack (above the AI button)');
+        const html = fs.readFileSync('index.html', 'utf8');
+        assert(html.split('id="miniPlayer"').length === 2, 'exactly ONE mini player element in the DOM');
+        const f = U.shouldShowMiniPlayer;
+        assert(f({ hasCurrent: true, page: 'music', npOpen: false }) === false, 'hidden inside the Music Room');
+        assert(f({ hasCurrent: true, page: 'home', npOpen: false }) === true, 'visible outside Music Room as the controller');
+        assert(f({ hasCurrent: true, page: 'home', npOpen: true }) === false, 'never over Now Playing');
+    });
+
+    await test('phase13.8: single player invariant holds after the header fix', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        assert(mr.indexOf('this.player = window.LoveHubMusicPlayer') !== -1, 'binds the single global player');
+        assert(mr.indexOf('new MusicPlayerService(') === -1, 'Music Room creates no second player');
+        assert(mr.indexOf('new Audio(') === -1, 'Music Room creates no second audio');
+        const mp = fs.readFileSync('music-player.js', 'utf8');
+        assert((mp.match(/new Audio\(/g) || []).length === 1, 'exactly one <audio> in the whole engine');
+    });
+
+    await test('phase13.8: leaving the Music Room preserves every playback field', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        const grab = (sig) => {
+            // Match the METHOD definition (brace included) so a same-named
+            // comment near the file top can never hijack the grab.
+            const i = mr.indexOf(sig + ' {');
+            const bodyStart = mr.indexOf('{', i) + 1;
+            const bodyEnd = mr.indexOf('\n        //', i);
+            return mr.slice(bodyStart, bodyEnd > -1 ? bodyEnd : bodyStart + 4000);
+        };
+        ['onPageChanged(page)', '_closeNowPlaying(silent)'].forEach((sig) => {
+            const body = grab(sig);
+            assert(body.indexOf('.pause()') === -1 && body.indexOf('.stop(') === -1, sig + ' never pauses/stops');
+            assert(body.indexOf('.seek(') === -1 && body.indexOf('setVolume(') === -1, sig + ' never seeks/changes volume');
+            assert(body.indexOf('loadTrack(') === -1 && body.indexOf('new Audio(') === -1, sig + ' never reloads audio');
+        });
+        const P = new Player();
+        P.setVolume(0.65);
+        assert(P.snapshot().volume === 0.65, 'volume survives across page switches (engine-level)');
+        P.destroy();
+    });
+
     // ===========================================================================
     console.log('\n== MusicPlayerService: queue ==');
 

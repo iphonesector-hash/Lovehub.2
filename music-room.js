@@ -532,6 +532,24 @@
             });
 
             if (this._els.queueBtn) this._els.queueBtn.addEventListener('click', () => this._showQueue());
+            // Phase 13.8 — header Sleep Timer + Equalizer buttons open their sheets
+            // (same sheets as the Now Playing buttons; queue is closed first so
+            // two overlays can never stack).
+            if (this._els.sleepBtn) {
+                this._els.sleepBtn.addEventListener('click', () => {
+                    this._hideQueue();
+                    this._hideSheet(this._els.eqSheet);
+                    this._openSheet(this._els.sleepSheet);
+                    this._renderSleepSheet();
+                });
+            }
+            if (this._els.eqBtn) {
+                this._els.eqBtn.addEventListener('click', () => {
+                    this._hideQueue();
+                    this._hideSheet(this._els.sleepSheet);
+                    this._openSheet(this._els.eqSheet);
+                });
+            }
             if (this._els.queueClear) this._els.queueClear.addEventListener('click', () => this.player.clearQueue());
             if (this._els.queueDone) this._els.queueDone.addEventListener('click', () => this._hideQueue());
             if (this._els.queueShuffle) {
