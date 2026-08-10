@@ -1611,11 +1611,12 @@ async function main() {
     // ---------------------------------------------------------------------------
     console.log('\n== Phase 10 hotfix: SW cache v2 + 50-result cap ==');
 
-    await test('hotfix: service worker CACHE_NAME is lovehub-v3', () => {
+    await test('hotfix: service worker CACHE_NAME is lovehub-v4', () => {
         const sw = fs.readFileSync('sw.js', 'utf8');
-        assert(/CACHE_NAME\s*=\s*'lovehub-v3'/.test(sw), 'CACHE_NAME bumped to lovehub-v3');
+        assert(/CACHE_NAME\s*=\s*'lovehub-v4'/.test(sw), 'CACHE_NAME bumped to lovehub-v4');
         assert(sw.indexOf('lovehub-v1') === -1, 'no stale lovehub-v1 reference remains in sw.js');
-        assert(/key !== CACHE_NAME[\s\S]*?caches\.delete/.test(sw), 'activate cleanup deletes old caches (incl. lovehub-v1)');
+        assert(sw.indexOf('lovehub-v3') === -1, 'no stale lovehub-v3 reference remains in sw.js (previous cache version)');
+        assert(/key !== CACHE_NAME[\s\S]*?caches\.delete/.test(sw), 'activate cleanup deletes old caches (incl. lovehub-v1/v3)');
         assert(/skipWaiting\(\)/.test(sw) && /clients\.claim\(\)/.test(sw), 'skipWaiting + clients.claim preserved');
     });
 
