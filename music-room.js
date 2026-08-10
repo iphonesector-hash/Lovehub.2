@@ -97,6 +97,32 @@
         return next;
     }
 
+    // Phase 13 — rebuild a playable track from a music_favorites row. Every
+    // saved track keeps enough metadata (provider, playbackMode, sourceType,
+    // youtube videoId) to replay through the SAME path it was saved with.
+    function favoriteToTrack(f) {
+        const meta = (f && f.metadata) || null;
+        const yt = (meta && meta.youtube) || null;
+        const isYt = !!(meta && (meta.playbackMode === 'youtube-embed' || (yt && yt.playbackMode === 'youtube-embed')));
+        const videoId = (isYt && yt && yt.videoId) || (meta && meta.videoId) || null;
+        const metaOut = Object.assign({}, meta);
+        if (isYt && videoId) metaOut.youtube = { videoId, playbackMode: 'youtube-embed' };
+        return {
+            title: (f && f.title) || 'Untitled',
+            artist: (f && f.artist) || null,
+            source: (f && f.source) || null,
+            sourceType: (meta && meta.sourceType) || null,
+            provider: (meta && meta.provider) || null,
+            pageUrl: (f && f.page_url) || null,
+            playableUrl: (f && f.playable_url) || null,
+            artworkUrl: (f && f.artwork_url) || null,
+            duration: (f && f.duration) || 0,
+            playbackMode: (meta && meta.playbackMode) || (isYt ? 'youtube-embed' : 'html5-audio'),
+            metadata: metaOut,
+            dedupeKey: (meta && meta.dedupeKey) || (f && f.playable_url)
+        };
+    }
+
     // Extract a small palette from raw RGBA pixels via color-bin histogram.
     function samplePalette(pixels, w, h, count) {
         const need = count || 3;
@@ -170,6 +196,7 @@
             this._debounce = null;
             this._view = 'home'; // home | search | library
             this._libView = 'favorites';
+            this._filter = 'all'; // all | songs | favorites | recent
             this._query = '';
             this._mood = safeGet('lovehub_music_mood_v1', 'romantic');
             if (!MOODS[this._mood]) this._mood = 'romantic';
@@ -196,6 +223,9 @@
                 state: document.getElementById('musicSearchState'),
                 results: document.getElementById('musicResults'),
                 count: document.getElementById('musicCount'),
+                sub: document.getElementById('musicPageSub'),
+                filters: document.getElementById('musicFilters'),
+                filterBtns: Array.prototype.slice.call(document.querySelectorAll('.music-filter')),
                 tabs: Array.prototype.slice.call(document.querySelectorAll('.music-tab')),
                 views: {
                     home: document.getElementById('musicHomeView'),
@@ -474,6 +504,9 @@
             this._els.libTabs.forEach((tab) => {
                 tab.addEventListener('click', () => this._switchLibView(tab.dataset.lib));
             });
+            this._els.filterBtns.forEach((b) => {
+                b.addEventListener('click', () => this._setFilter(b.dataset.filter));
+            });
 
             if (this._els.queueBtn) this._els.queueBtn.addEventListener('click', () => this._showQueue());
             if (this._els.queueClear) this._els.queueClear.addEventListener('click', () => this.player.clearQueue());
@@ -696,6 +729,7 @@
                 if (seq !== this._searchSeq) return; // superseded by a newer search
                 this.results = out.results || [];
                 this._setSearchState(out.state, { hasPersian: /[\u0600-\u06ff]/.test(out.query || q) });
+                this._updateSubtitle(out);
                 this._renderResults(this.results);
             } catch (err) {
                 if (seq !== this._searchSeq) return;
@@ -772,6 +806,77 @@
             this._els.libTabs.forEach((t) => t.classList.toggle('active', t.dataset.lib === view));
             this._renderLibrary();
         }
+
+        // Phase 13 — lightweight result filters (All / Songs / Favorites /
+        // Recently Played). Filtering never re-ranks or re-fetches: it only
+        // narrows the results the search already returned.
+        _setFilter(filter) {
+            this._filter = filter || 'all';
+            this._els.filterBtns.forEach((b) => b.classList.toggle('active', b.dataset.filter === this._filter));
+            this._renderResults(this.results);
+        }
+
+        // Phase 13 — honest provider identity helpers (badges + header line).
+        _isYoutubeTrack(track) {
+            return !!(track && (track.playbackMode === 'youtube-embed' ||
+                (track.metadata && track.metadata.youtube && track.metadata.youtube.playbackMode === 'youtube-embed')));
+        }
+
+        _providerName(provider) {
+            const map = {
+                'codebazan-rjavan': 'Radio Javan',
+                'internet-archive': 'Internet Archive',
+                'telegram': 'Telegram',
+                'deezer': 'Deezer',
+                'audius': 'Audius',
+                'melobit': 'Melobit',
+                'ahangify': 'Ahangify',
+                'melodify': 'Melodify',
+                'codebazan': 'CodeBazan',
+                'youtube': 'YouTube'
+            };
+            return map[provider] || provider;
+        }
+
+        _providerLabel(track) {
+            if (!track) return '';
+            if (this._isYoutubeTrack(track)) return 'YouTube · Video playback';
+            const provider = track.provider || track.sourceType || null;
+            if (provider) {
+                const name = this._providerName(provider);
+                if (name && name !== provider) return name;
+            }
+            const src = track.source || provider || '';
+            return String(src).slice(0, 24);
+        }
+
+        _providerBadge(track) {
+            const label = this._providerLabel(track);
+            if (!label) return null;
+            const b = el('span', 'music-provider-badge' + (this._isYoutubeTrack(track) ? ' video' : ''), label);
+            b.setAttribute('aria-label', 'Source: ' + label);
+            return b;
+        }
+
+        _updateSubtitle(out) {
+            const sub = this._els.sub;
+            if (!sub) return;
+            // Provider names come from the RESULTS themselves (honest — a
+            // provider that returned nothing is never claimed). Falls back to
+            // queried providers when results carry no provider id.
+            const ids = new Set();
+            ((out && out.results) || []).forEach((t) => { if (t && t.provider) ids.add(String(t.provider)); });
+            if (!ids.size) {
+                ((out && out.providers) || []).forEach((p) => {
+                    if (p && p.enabled && p.searches > 0) ids.add(String(p.id));
+                });
+            }
+            const names = Array.from(ids).map((id) => this._providerName(id)).filter(Boolean);
+            sub.textContent = names.length
+                ? 'Found in ' + names.join(', ')
+                : 'Search, play & share songs together';
+        }
+
 
         // -------------------------------------------------------------------
         // Home (5.2 / 20 / 21)
@@ -894,8 +999,10 @@
             card.appendChild(art);
             const body = el('div', 'music-card-body');
             body.appendChild(el('div', 'music-card-title', track.title || 'Untitled'));
-            const cardIsYt = !!(track.playbackMode === 'youtube-embed' || (track.metadata && track.metadata.youtube && track.metadata.youtube.playbackMode === 'youtube-embed'));
+            const cardIsYt = this._isYoutubeTrack(track);
             body.appendChild(el('div', 'music-card-meta', [track.artist, track.source, cardIsYt ? '▶ Video playback' : null].filter(Boolean).join(' · ') || 'Unknown artist'));
+            const badge = this._providerBadge(track);
+            if (badge) body.appendChild(badge);
             if (track.duration) body.appendChild(el('div', 'music-card-dur', fmtTime(track.duration)));
             card.appendChild(body);
             const activate = () => {
@@ -919,15 +1026,31 @@
             const box = this._els.results;
             if (!box) return;
             box.innerHTML = '';
-            const list = results || this.results;
-            if (this._els.count) {
-                this._els.count.textContent = list.length ? list.length + ' result' + (list.length === 1 ? '' : 's') : '';
+            const all = results || this.results || [];
+            let list = all;
+            if (this._filter === 'songs') list = all.filter((t) => this._isPlayableTrack(t));
+            else if (this._filter === 'favorites') list = all.filter((t) => this._isFavorited(t));
+            else if (this._filter === 'recent') {
+                const keys = new Set((this.recents || []).map((r) => r.dedupeKey || r.playableUrl));
+                list = all.filter((t) => keys.has(t.dedupeKey || t.playableUrl));
             }
-            if (!list || !list.length) return;
+            if (this._els.filters) this._els.filters.style.display = all.length ? '' : 'none';
+            if (this._els.count) {
+                this._els.count.textContent = all.length
+                    ? (list.length === all.length
+                        ? all.length + ' result' + (all.length === 1 ? '' : 's')
+                        : list.length + ' of ' + all.length + ' results')
+                    : '';
+            }
+            if (!list.length) {
+                if (all.length) box.appendChild(el('p', 'music-state-line', 'No results match this filter.'));
+                return;
+            }
             const frag = document.createDocumentFragment();
             list.forEach((track) => frag.appendChild(this._buildRow(track, { playable: this._isPlayableTrack(track) })));
             box.appendChild(frag);
         }
+
 
         _isCurrent(track) {
             const c = this.player.current;
@@ -944,21 +1067,7 @@
         }
 
         _favToTrack(f) {
-            const meta = f.metadata || null;
-            return {
-                title: f.title || 'Untitled',
-                artist: f.artist || null,
-                source: f.source || null,
-                pageUrl: f.page_url,
-                playableUrl: f.playable_url,
-                artworkUrl: f.artwork_url,
-                duration: f.duration,
-                // Round-trip the playback mode + provider metadata so YouTube
-                // embed / Telegram tracks keep working from the library.
-                playbackMode: (meta && meta.playbackMode) || null,
-                metadata: meta,
-                dedupeKey: (meta && meta.dedupeKey) || f.playable_url
-            };
+            return favoriteToTrack(f);
         }
 
         _isFavorited(track) {
@@ -982,12 +1091,14 @@
             const titleEl = el('div', 'music-result-title', track.title || 'Untitled');
             titleEl.dir = 'auto'; // Persian titles render RTL, Latin LTR
             info.appendChild(titleEl);
-            const isYt = !!(track.playbackMode === 'youtube-embed' || (track.metadata && track.metadata.youtube && track.metadata.youtube.playbackMode === 'youtube-embed'));
+            const isYt = this._isYoutubeTrack(track);
             const meta = [track.artist, track.source, isYt ? '▶ Video playback' : null].filter(Boolean).join(' · ');
             const metaLine = el('div', 'music-result-meta', meta || 'Unknown artist');
             metaLine.dir = 'auto';
             if (track.duration) metaLine.textContent += ' · ' + fmtTime(track.duration);
             info.appendChild(metaLine);
+            const badge = this._providerBadge(track);
+            if (badge) info.appendChild(badge);
             if (o.addedBy) info.appendChild(o.addedBy);
             row.appendChild(info);
 
@@ -1796,6 +1907,7 @@
     window.LoveHubMusicRoomUtils = {
         pushRecent,
         upsertContinue,
+        favoriteToTrack,
         samplePalette,
         fmtTime,
         fmtRemaining,

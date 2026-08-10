@@ -1984,6 +1984,96 @@ async function main() {
         assert(t.audioUrl.indexOf('telesco.pe') !== -1 && t.audioUrl.indexOf('/api/telegram') === -1, 'audio stays on Telegram CDN');
     });
 
+    // =====================================================================
+    // Phase 13 — Music Room 2.0 + Unified LoveHub Player
+    // =====================================================================
+
+    await test('phase13: favoriteToTrack round-trips a YouTube embed favorite', () => {
+        const row = {
+            title: 'Hamin Khoobe',
+            artist: 'Mohsen Chavoshi',
+            source: 'youtube',
+            page_url: 'https://www.youtube.com/watch?v=AbC123xyz',
+            playable_url: 'https://www.youtube.com/watch?v=AbC123xyz',
+            duration: 225,
+            metadata: {
+                provider: 'youtube',
+                dedupeKey: 'yt:AbC123xyz',
+                playbackMode: 'youtube-embed',
+                sourceType: 'youtube',
+                videoId: 'AbC123xyz',
+                youtube: { videoId: 'AbC123xyz', playbackMode: 'youtube-embed' }
+            }
+        };
+        const t = U.favoriteToTrack(row);
+        assert(t.playbackMode === 'youtube-embed', 'playbackMode preserved');
+        assert(t.metadata.youtube && t.metadata.youtube.videoId === 'AbC123xyz', 'youtube videoId preserved');
+        assert(MusicSearch.isTrackPlayable(t) === true, 'rebuilt youtube favorite is playable');
+        assert(t.provider === 'youtube' && t.sourceType === 'youtube', 'provider/sourceType preserved');
+        assert(t.dedupeKey === 'yt:AbC123xyz', 'dedupeKey preserved');
+    });
+
+    await test('phase13: favoriteToTrack round-trips an html5-audio favorite (Telegram)', () => {
+        const row = {
+            title: 'Ebi — Gole Yakh',
+            artist: 'Ebi',
+            source: 'Telegram',
+            playable_url: 'https://cdn1.telesco.pe/file/sample.mp3?token=abc',
+            artwork_url: 'https://cdn1.telesco.pe/thumb.jpg',
+            duration: 240,
+            metadata: {
+                provider: 'telegram',
+                dedupeKey: 'tg:cdn1.telesco.pe/file/sample.mp3',
+                playbackMode: 'html5-audio',
+                sourceType: 'telegram-media'
+            }
+        };
+        const t = U.favoriteToTrack(row);
+        assert(t.playableUrl === row.playable_url, 'telegram CDN url preserved verbatim');
+        assert(t.playbackMode === 'html5-audio', 'html5-audio playbackMode preserved');
+        assert(t.sourceType === 'telegram-media', 'sourceType preserved');
+        assert(MusicSearch.isTrackPlayable(t) === true, 'telegram favorite playable');
+        assert(t.metadata.youtube == null, 'no youtube metadata on audio favorite');
+    });
+
+    await test('phase13: single canonical player invariant', () => {
+        const globalPlayer = sandbox.window.LoveHubMusicPlayer;
+        assert(globalPlayer instanceof Player, 'LoveHubMusicPlayer is a MusicPlayerService');
+        assert(typeof globalPlayer.loadTrack === 'function' && typeof globalPlayer.addToQueue === 'function', 'global player has full transport + queue API');
+        assert(typeof globalPlayer.getAudioElement === 'function', 'global player exposes the single <audio>');
+        const P = new Player();
+        assert(P !== globalPlayer, 'extra instances are opt-in (tests), never created by the UI');
+    });
+
+    await test('phase13: legacy second player engine is fully retired', () => {
+        const cr = fs.readFileSync('chat-rich.js', 'utf8');
+        assert(cr.indexOf('musicRoomOverlay') === -1, 'no legacy overlay id in chat-rich.js');
+        assert(cr.indexOf('scheduleBeat') === -1 && cr.indexOf('scheduleMusicLoop') === -1, 'no WebAudio oscillator engine in chat-rich.js');
+        assert(cr.indexOf("app.navigateTo('music')") !== -1, 'Music entry navigates to the canonical Music page');
+        const html = fs.readFileSync('index.html', 'utf8');
+        assert(html.indexOf('musicRoomOverlay') === -1, 'legacy overlay DOM removed from index.html');
+        assert(html.indexOf('musicFilters') !== -1 && html.indexOf('musicPageSub') !== -1, 'Music Room 2.0 header + filters present');
+        assert(html.indexOf('music-filter') !== -1, 'filter chips present in search view');
+    });
+
+    await test('phase13: MusicService saves full replay metadata for YouTube embed tracks', () => {
+        const ms = fs.readFileSync('src/services/MusicService.js', 'utf8');
+        assert(ms.indexOf('playbackMode') !== -1, 'service stores playbackMode');
+        assert(ms.indexOf('videoId') !== -1, 'service stores videoId for youtube favorites');
+        assert(ms.indexOf('youtube-embed') !== -1, 'service understands youtube-embed favorites');
+        assert(ms.indexOf('playable_url: String(fallbackUrl)') !== -1, 'watch-url fallback keeps NOT NULL playable_url happy');
+        assert(ms.indexOf("'This result has no playable stream'") !== -1, 'stream guard still rejects unplayable tracks');
+    });
+
+    await test('phase13: provider badges stay honest (no fake audio claims)', () => {
+        const mr = fs.readFileSync('music-room.js', 'utf8');
+        assert(mr.indexOf("'YouTube · Video playback'") !== -1, 'YouTube labelled as video playback, never audio');
+        assert(mr.indexOf("'Radio Javan'") !== -1, 'Radio Javan badge label present');
+        assert(mr.indexOf("'Telegram'") !== -1, 'Telegram badge label present');
+        assert(mr.indexOf("'Internet Archive'") !== -1, 'Internet Archive badge label present');
+        assert(mr.indexOf('music-provider-badge') !== -1, 'badge element builder present');
+    });
+
     console.log('\nResults:', passes, 'passed,', failures, 'failed');
     process.exit(failures ? 1 : 0);
 }

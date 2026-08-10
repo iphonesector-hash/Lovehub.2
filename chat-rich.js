@@ -14,7 +14,8 @@
  *   - voice messages (MediaRecorder, waveform, 1x/1.5x/2x playback)
  *   - chat sound effects (SoundService) + settings section
  *   - floating-hearts message effects
- *   - Music Room (procedural ambient originals) + AI Love Assistant sheets
+ *   - AI Love Assistant sheets (the legacy procedural Music Room overlay was
+ *     retired in Phase 13 — Music opens the canonical Music page/player)
  *   - bug fixes: composer overlap (hide FABs on chat page), chat open position
  *     (internal scroll list + scroll-to-bottom), keyboard inset, and purple
  *     message status theme (CSS in chat-rich.css)
@@ -84,7 +85,6 @@
     wrap(proto, 'handleSignedOut', function () {
         this.stopVoiceRecording();
         this.closeAllSheets();
-        this.stopMusic();
         this._pendingMedia = null;
         this._mediaUrlCache = new Map();
         this._mediaUrlInFlight = new Map();
@@ -94,7 +94,6 @@
     wrap(proto, 'refreshCouple', function () {
         this.stopVoiceRecording();
         this.closeAllSheets();
-        this.stopMusic();
         this._pendingMedia = null;
         this._mediaUrlCache = new Map();
         this._mediaUrlInFlight = new Map();
@@ -1129,7 +1128,6 @@
         this.setupDrawSheet();
         this.setupStickerSheet();
         this.setupVoiceSheet();
-        this.setupMusicRoom();
         this.setupAiSheet();
         this.setupKeyboardInset();
 
@@ -2297,181 +2295,16 @@
         ctx.stroke();
     };
 
-    // ---- Music Room (procedural ambient originals) ----
+    // ---- Music Room entry (Phase 13) ----
+    // LoveHub has ONE canonical playback engine: the global MusicPlayerService
+    // (music-player.js) driven by the Music Room page (music-room.js). The
+    // legacy procedural "LoveHub originals" WebAudio sheet was retired in
+    // Phase 13 — opening Music from the home card / FAB now navigates to the
+    // Music page, which connects to that same global player state and queue.
 
     proto.openMusicRoom = function () {
-        const overlay = document.getElementById('musicRoomOverlay');
-        if (!overlay) return;
-        if (!this._music) this._music = { index: 0, playing: false, nextTime: 0, beat: 0 };
-        this.renderMusicList();
-        this.updateMusicUI();
-        overlay.classList.add('active');
-    };
-
-    proto.renderMusicList = function () {
-        const list = document.getElementById('musicList');
-        if (!list || list.dataset.built) return;
-        list.dataset.built = '1';
-        this._musicTracks().forEach((t, i) => {
-            const item = document.createElement('div');
-            item.className = 'music-item';
-            item.innerHTML = `<span class="mi-emoji">${t.emoji}</span><span class="mi-name">${t.name}</span><span class="mi-dur">${this.formatDuration(t.duration)}</span>`;
-            item.addEventListener('click', () => this.musicSelect(i));
-            list.appendChild(item);
-        });
-    };
-
-    proto._musicTracks = function () {
-        return [
-            { name: 'First Light', emoji: '🌅', tempo: 60, duration: 68, chords: [[261.63, 329.63, 392.0], [293.66, 349.23, 440.0], [220.0, 293.66, 349.23], [261.63, 329.63, 392.0]] },
-            { name: 'Heartbeat', emoji: '💓', tempo: 72, duration: 52, chords: [[329.63, 415.3, 493.88], [349.23, 440.0, 523.25], [293.66, 369.99, 440.0], [329.63, 415.3, 493.88]] },
-            { name: 'Moonlight', emoji: '🌙', tempo: 55, duration: 74, chords: [[220.0, 277.18, 329.63], [196.0, 246.94, 293.66], [174.61, 220.0, 261.63], [196.0, 246.94, 293.66]] },
-            { name: 'Golden Hour', emoji: '🌇', tempo: 66, duration: 58, chords: [[293.66, 369.99, 440.0], [329.63, 415.3, 493.88], [261.63, 329.63, 392.0], [293.66, 369.99, 440.0]] },
-            { name: 'Forever', emoji: '💍', tempo: 64, duration: 66, chords: [[329.63, 392.0, 493.88], [293.66, 369.99, 466.16], [349.23, 440.0, 523.25], [329.63, 392.0, 493.88]] }
-        ];
-    };
-
-    proto.musicSelect = function (index, autoplay) {
-        const wasPlaying = this._music ? this._music.playing : false;
-        this.stopMusic();
-        this._music = { index, playing: false, nextTime: 0, beat: 0 };
-        this.updateMusicUI();
-        if (autoplay !== false || wasPlaying) this.musicToggle();
-    };
-
-    proto.musicPrev = function () {
-        if (!this._music) this._music = { index: 0, playing: false, nextTime: 0, beat: 0 };
-        this.musicSelect((this._music.index - 1 + this._musicTracks().length) % this._musicTracks().length, true);
-    };
-
-    proto.musicNext = function () {
-        if (!this._music) this._music = { index: 0, playing: false, nextTime: 0, beat: 0 };
-        this.musicSelect((this._music.index + 1) % this._musicTracks().length, true);
-    };
-
-    proto.musicToggle = function () {
-        if (!this._music) this._music = { index: 0, playing: false, nextTime: 0, beat: 0 };
-        const m = this._music;
-        m.playing = !m.playing;
-        if (m.playing) {
-            if (window.LoveHubSounds) window.LoveHubSounds.unlock();
-            this.scheduleMusicLoop();
-        } else {
-            this.stopMusicScheduler();
-        }
-        this.updateMusicUI();
-    };
-
-    proto.scheduleMusicLoop = function () {
-        const m = this._music;
-        if (!m || !m.playing) return;
-        const track = this._musicTracks()[m.index];
-        const beatDur = 60 / track.tempo;
-        const schedule = () => {
-            if (!this._music || !this._music.playing) return;
-            while (this._music.nextTime < performance.now() + 3000) {
-                this.scheduleBeat(this._music, track, this._music.nextTime);
-                this._music.nextTime += beatDur * 1000;
-                this._music.beat += 1;
-                if (this._music.beat * beatDur >= track.duration) {
-                    this.musicNext();
-                    return;
-                }
-            }
-            this._musicTimer = setTimeout(schedule, 120);
-        };
-        if (!this._music.nextTime) this._music.nextTime = performance.now() + 300;
-        schedule();
-        clearInterval(this._musicFillTimer);
-        this._musicFillTimer = setInterval(() => {
-            const fill = document.getElementById('musicFill');
-            if (fill && this._music) {
-                fill.style.width = Math.min(100, ((this._music.beat * beatDur) / track.duration) * 100) + '%';
-            }
-        }, 250);
-    };
-
-    proto.scheduleBeat = function (m, track, when) {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        if (!this._musicCtx) this._musicCtx = new AC();
-        const ctx = this._musicCtx;
-        const t0 = ctx.currentTime + Math.max(0, (when - performance.now()) / 1000);
-        const chord = track.chords[m.beat % track.chords.length];
-        chord.forEach((f, i) => {
-            const osc = ctx.createOscillator();
-            osc.type = i === 0 ? 'triangle' : 'sine';
-            osc.frequency.value = i === 0 ? f * 0.5 : f;
-            const g = ctx.createGain();
-            g.gain.setValueAtTime(0.0001, t0);
-            g.gain.exponentialRampToValueAtTime(i === 0 ? 0.07 : 0.045, t0 + 0.4);
-            g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.2);
-            osc.connect(g);
-            g.connect(ctx.destination);
-            osc.start(t0);
-            osc.stop(t0 + 2.4);
-        });
-        if (m.beat % track.chords.length === 0) {
-            const osc = ctx.createOscillator();
-            osc.type = 'sine';
-            osc.frequency.value = chord[0] * 2;
-            const g = ctx.createGain();
-            g.gain.setValueAtTime(0.0001, t0);
-            g.gain.exponentialRampToValueAtTime(0.035, t0 + 0.05);
-            g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.4);
-            osc.connect(g);
-            g.connect(ctx.destination);
-            osc.start(t0);
-            osc.stop(t0 + 1.5);
-        }
-    };
-
-    proto.stopMusicScheduler = function () {
-        clearTimeout(this._musicTimer);
-        clearInterval(this._musicFillTimer);
-        this._musicTimer = null;
-        this._musicFillTimer = null;
-    };
-
-    proto.stopMusic = function () {
-        this.stopMusicScheduler();
-        if (this._music) this._music.playing = false;
-        const art = document.getElementById('musicArt');
-        if (art) art.classList.remove('playing');
-    };
-
-    proto.updateMusicUI = function () {
-        const m = this._music;
-        if (!m) return;
-        const track = this._musicTracks()[m.index];
-        const title = document.getElementById('musicTitle');
-        const artist = document.getElementById('musicArtist');
-        const art = document.getElementById('musicArt');
-        const playBtn = document.getElementById('musicPlay');
-        if (title) title.textContent = track.name;
-        if (artist) artist.textContent = `${track.emoji} LoveHub original · ${this.formatDuration(track.duration)}`;
-        if (art) { art.textContent = track.emoji; art.classList.toggle('playing', !!m.playing); }
-        if (playBtn) {
-            playBtn.innerHTML = m.playing
-                ? '<svg class="icon-svg" style="width:22px;height:22px"><use href="#icon-pause"/></svg>'
-                : '<svg class="icon-svg" style="width:22px;height:22px"><use href="#icon-play"/></svg>';
-        }
-        document.querySelectorAll('.music-item').forEach((el, i) => el.classList.toggle('active', i === m.index));
-        const fill = document.getElementById('musicFill');
-        if (fill && !m.playing) fill.style.width = '0%';
-    };
-
-    proto.setupMusicRoom = function () {
-        const overlay = document.getElementById('musicRoomOverlay');
-        const closeBtn = document.getElementById('musicRoomClose');
-        if (closeBtn) closeBtn.addEventListener('click', () => { this.stopMusic(); overlay?.classList.remove('active'); });
-        if (overlay) overlay.addEventListener('click', (e) => { if (e.target === overlay) { this.stopMusic(); overlay.classList.remove('active'); } });
-        const prev = document.getElementById('musicPrev');
-        const next = document.getElementById('musicNext');
-        const play = document.getElementById('musicPlay');
-        if (prev) prev.addEventListener('click', () => this.musicPrev());
-        if (next) next.addEventListener('click', () => this.musicNext());
-        if (play) play.addEventListener('click', () => this.musicToggle());
+        const app = window.app;
+        if (app && app.navigateTo) app.navigateTo('music');
     };
 
     // ---- AI Love Assistant (curated local generator, API-ready) ----
@@ -2608,7 +2441,7 @@
     // ---- shared sheet helpers ----
 
     proto.closeAllSheets = function () {
-        ['drawOverlay', 'stickerOverlay', 'voiceOverlay', 'musicRoomOverlay', 'aiOverlay', 'mediaPreviewOverlay', 'mediaViewer'].forEach((id) => {
+        ['drawOverlay', 'stickerOverlay', 'voiceOverlay', 'aiOverlay', 'mediaPreviewOverlay', 'mediaViewer'].forEach((id) => {
             const el = document.getElementById(id);
             if (el) el.classList.remove('active');
         });

@@ -47,7 +47,22 @@ export class MusicService {
     async addFavorite(coupleId, track) {
         const uid = await this._uid();
         if (!this.isReady() || !coupleId || !uid) return { success: false, error: 'Not signed in' };
-        if (!track || !track.playableUrl) return { success: false, error: 'This result has no playable stream' };
+
+        // Phase 13 — a track is saveable when it has a direct audio stream OR
+        // is a YouTube embed track (official IFrame playback — no audio URL).
+        const yt = (track && track.metadata && track.metadata.youtube) || null;
+        const isYtEmbed = !!(track && (track.playbackMode === 'youtube-embed' || (yt && yt.playbackMode === 'youtube-embed')));
+        const ytVideoId = isYtEmbed && yt ? (yt.videoId || null) : null;
+        if (!track || !(track.playableUrl || (isYtEmbed && ytVideoId))) {
+            return { success: false, error: 'This result has no playable stream' };
+        }
+
+        // playable_url is NOT NULL in the DB. YouTube embed tracks have no
+        // audio URL, so the official watch URL is stored there as an
+        // identifier — playback always routes through the saved playbackMode.
+        const fallbackUrl = (isYtEmbed && ytVideoId)
+            ? 'https://www.youtube.com/watch?v=' + encodeURIComponent(ytVideoId)
+            : (track.playableUrl || '');
 
         const row = {
             couple_id: coupleId,
@@ -56,12 +71,19 @@ export class MusicService {
             artist: track.artist ? String(track.artist).slice(0, MAX_TEXT) : null,
             source: track.source ? String(track.source).slice(0, 120) : null,
             page_url: track.pageUrl ? String(track.pageUrl).slice(0, MAX_URL) : null,
-            playable_url: String(track.playableUrl).slice(0, MAX_URL),
+            playable_url: String(fallbackUrl).slice(0, MAX_URL),
             artwork_url: track.artworkUrl ? String(track.artworkUrl).slice(0, MAX_URL) : null,
             duration: track.duration ? Number(track.duration) : null,
             metadata: {
                 provider: track.provider || null,
-                dedupeKey: (track.dedupeKey || track.playableUrl).slice(0, 500)
+                dedupeKey: (track.dedupeKey || fallbackUrl).slice(0, 500),
+                // Phase 13 — full replay metadata: a saved track must replay
+                // through the SAME path it was saved with (html5-audio vs
+                // youtube-embed), including the provider video id.
+                playbackMode: track.playbackMode || (isYtEmbed ? 'youtube-embed' : 'html5-audio'),
+                sourceType: track.sourceType || null,
+                videoId: ytVideoId,
+                youtube: isYtEmbed ? { videoId: ytVideoId, playbackMode: 'youtube-embed' } : null
             }
         };
         const { data, error } = await supabaseClient

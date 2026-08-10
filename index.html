@@ -173,11 +173,14 @@
                 <div id="timelineList" style="position:relative;padding-left:22px"></div>
             </section>
 
-            <!-- MUSIC ROOM PAGE (Phase 5 Premium) -->
+            <!-- MUSIC ROOM PAGE (Phase 5 Premium / Phase 13 Music Room 2.0) -->
             <section class="page" data-page="music" id="musicPage">
                 <div class="music-scroll">
                 <div class="top-bar">
-                    <div class="page-title" style="margin:0">Music</div>
+                    <div class="music-page-heading">
+                        <div class="page-title" style="margin:0">Music</div>
+                        <div class="music-page-sub" id="musicPageSub">Search, play &amp; share songs together</div>
+                    </div>
                     <div class="music-top-actions">
                         <button class="glass icon-btn" id="musicSleepBtn" title="Sleep timer" aria-label="Sleep timer">
                             <svg width="18" height="18" class="icon-svg"><use href="#icon-timer"/></svg>
@@ -244,6 +247,12 @@
                         <div id="musicHomeSections"></div>
                     </div>
                     <div class="music-section" id="musicSearchView" style="display:none">
+                        <div class="music-filters" id="musicFilters" style="display:none" role="tablist" aria-label="Filter results">
+                            <button class="music-filter active" data-filter="all" role="tab">All</button>
+                            <button class="music-filter" data-filter="songs" role="tab">Songs</button>
+                            <button class="music-filter" data-filter="favorites" role="tab">Favorites</button>
+                            <button class="music-filter" data-filter="recent" role="tab">Recently Played</button>
+                        </div>
                         <div class="music-count" id="musicCount"></div>
                         <div class="music-state" id="musicSearchState"></div>
                         <div id="musicResults"></div>
@@ -641,31 +650,6 @@
                     <button class="login-cancel" id="voiceCancel">Cancel</button>
                     <button class="login-submit" id="voiceSend" style="margin:0;display:none">Send 🎙️</button>
                 </div>
-            </div>
-        </div>
-
-        <!-- Music Room -->
-        <div class="draw-overlay" id="musicRoomOverlay">
-            <div class="draw-sheet music-sheet">
-                <div class="draw-head">
-                    <span class="draw-title">🎵 Music Room</span>
-                    <button class="modal-close" id="musicRoomClose"><svg class="icon-svg"><use href="#icon-close"/></svg></button>
-                </div>
-                <div class="music-hero">
-                    <div class="music-art" id="musicArt">🎵</div>
-                    <div class="music-now">
-                        <div class="music-title" id="musicTitle">Select a track</div>
-                        <div class="music-artist" id="musicArtist">LoveHub originals</div>
-                    </div>
-                </div>
-                <div class="music-controls">
-                    <button class="tool-btn" id="musicPrev">⏮</button>
-                    <button class="music-play" id="musicPlay"><svg class="icon-svg" style="width:22px;height:22px"><use href="#icon-play"/></svg></button>
-                    <button class="tool-btn" id="musicNext">⏭</button>
-                </div>
-                <div class="music-track"><div class="music-fill" id="musicFill"></div></div>
-                <div class="music-list" id="musicList"></div>
-                <div class="music-note">Ambient LoveHub originals — generated live in your browser, nothing to download.</div>
             </div>
         </div>
 
