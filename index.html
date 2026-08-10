@@ -269,7 +269,47 @@
                 </div>
             </div>
 
-            <!-- Music Room overlays - mounted INSIDE #musicPage, never global -->
+            </section>
+
+            <!-- PROFILE PAGE -->
+            <section class="page" data-page="profile">
+                <div class="top-bar">
+                    <div class="page-title" style="margin:0">Profile</div>
+                    <button class="glass icon-btn" id="settingsBtn">
+                        <svg width="18" height="18" class="icon-svg"><use href="#icon-settings"/></svg>
+                    </button>
+                </div>
+                <div class="profile-head">
+                    <div class="profile-avatar-big">
+                        <div class="inner" id="profileAvatarInitial">P</div>
+                        <button class="avatar-edit-btn" id="avatarEditBtn"><svg width="14" height="14" class="icon-svg"><use href="#icon-camera"/></svg></button>
+                    </div>
+                    <div class="profile-name" id="profileName">POURYA</div>
+                    <div class="profile-sub" id="profileSubtitle">Together since 2023</div>
+                    <button class="edit-profile-btn" id="editProfileBtn">
+                        <svg class="icon-svg"><use href="#icon-edit"/></svg>
+                        <span>Edit Profile</span>
+                    </button>
+                </div>
+                <div class="section-title">Health</div>
+                <div class="health-grid" id="healthGrid"></div>
+                <div class="section-title">Personal</div>
+                <div class="glass info-card" id="personalInfoCard"></div>
+                <div class="section-title">Couple</div>
+                <div class="couple-section" id="coupleSection"></div>
+                <div class="section-title">Account</div>
+                <div class="account-actions">
+                    <button class="account-btn glass-card" id="loginBtn"><svg class="icon-svg"><use href="#icon-login"/></svg><span>Login</span></button>
+                    <button class="account-btn glass-card" id="changePasswordBtn" style="display:none"><svg class="icon-svg"><use href="#icon-settings"/></svg><span>Change Password</span></button>
+                    <button class="account-btn glass-card" id="logoutBtn" style="display:none"><svg class="icon-svg"><use href="#icon-logout"/></svg><span>Logout</span></button>
+                </div>
+            </section>
+        </div>
+
+        <!-- Music Room overlays (Phase 13.9) — GLOBAL, outside #musicPage so they
+             overlay any page (mini player → Now Playing works from Home/Chat/…)
+             and are fixed to the viewport, never scrolled away or clipped by the
+             Music page. They are UI only — playback stays on the single engine. -->
         <!-- Music queue sheet (8) -->
         <div class="music-queue-overlay" id="musicQueueSheet">
             <div class="music-queue-sheet">
@@ -366,49 +406,12 @@
             </div>
         </div>
 
-            </section>
-
-            <!-- PROFILE PAGE -->
-            <section class="page" data-page="profile">
-                <div class="top-bar">
-                    <div class="page-title" style="margin:0">Profile</div>
-                    <button class="glass icon-btn" id="settingsBtn">
-                        <svg width="18" height="18" class="icon-svg"><use href="#icon-settings"/></svg>
-                    </button>
-                </div>
-                <div class="profile-head">
-                    <div class="profile-avatar-big">
-                        <div class="inner" id="profileAvatarInitial">P</div>
-                        <button class="avatar-edit-btn" id="avatarEditBtn"><svg width="14" height="14" class="icon-svg"><use href="#icon-camera"/></svg></button>
-                    </div>
-                    <div class="profile-name" id="profileName">POURYA</div>
-                    <div class="profile-sub" id="profileSubtitle">Together since 2023</div>
-                    <button class="edit-profile-btn" id="editProfileBtn">
-                        <svg class="icon-svg"><use href="#icon-edit"/></svg>
-                        <span>Edit Profile</span>
-                    </button>
-                </div>
-                <div class="section-title">Health</div>
-                <div class="health-grid" id="healthGrid"></div>
-                <div class="section-title">Personal</div>
-                <div class="glass info-card" id="personalInfoCard"></div>
-                <div class="section-title">Couple</div>
-                <div class="couple-section" id="coupleSection"></div>
-                <div class="section-title">Account</div>
-                <div class="account-actions">
-                    <button class="account-btn glass-card" id="loginBtn"><svg class="icon-svg"><use href="#icon-login"/></svg><span>Login</span></button>
-                    <button class="account-btn glass-card" id="changePasswordBtn" style="display:none"><svg class="icon-svg"><use href="#icon-settings"/></svg><span>Change Password</span></button>
-                    <button class="account-btn glass-card" id="logoutBtn" style="display:none"><svg class="icon-svg"><use href="#icon-logout"/></svg><span>Logout</span></button>
-                </div>
-            </section>
-        </div>
-
         <!-- Floating Action Buttons -->
         <button class="fab fab-music" id="musicFab"><svg class="icon-svg"><use href="#icon-music"/></svg></button>
         <button class="fab fab-ai" id="aiFab"><svg class="icon-svg"><use href="#icon-star"/></svg></button>
 
         <!-- Mini Player (6) -->
-        <div class="mini-player" id="miniPlayer" role="button" tabindex="0" aria-label="Open Music Room" title="Open Music Room">
+        <div class="mini-player" id="miniPlayer" role="button" tabindex="0" aria-label="Now Playing" title="Now Playing">
             <div class="mini-art"></div>
             <div class="mini-info">
                 <div class="mini-title">Perfect</div>

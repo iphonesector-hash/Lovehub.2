@@ -224,7 +224,6 @@
             this._lastContinueSave = 0;
             this._moreMenu = null;
             this._favChannelBound = false;
-            this._pendingNpOpen = false;
 
             this._els = {
                 page: document.querySelector('.page[data-page="music"]'),
@@ -373,7 +372,6 @@
             this.myUid = null;
             this.favorites = [];
             this.results = [];
-            this._pendingNpOpen = false;
             if (this._favChannelBound && window.LoveHubMusic) {
                 window.LoveHubMusic.unsubscribeFavorites();
                 this._favChannelBound = false;
@@ -400,10 +398,6 @@
             this._startVisualizer();
             if (this._view === 'search' && this._els.input && !this._els.input.value && !this.results.length) {
                 this._setSearchState('idle');
-            }
-            if (this._pendingNpOpen) {
-                this._pendingNpOpen = false;
-                if (this.player.current) this._openNowPlaying();
             }
         }
 
@@ -573,30 +567,25 @@
 
             const mini = this._els.mini;
             if (mini) {
-                // Phase 13.6 — the mini player is a GATEWAY to the Music Room:
-                // tapping (or keyboard-activating) it opens the canonical Music
-                // page, never a second player. Playback state is untouched —
-                // it is the same MusicPlayerService, just revealed full-screen.
-                const openMusicRoomFromMini = () => {
-                    const app = window.app;
-                    if (!this.player.current) { if (app) app.navigateTo('music'); return; }
-                    // Now Playing lives INSIDE #musicPage - if the Music page
-                    // is not active, open it first, then show Now Playing.
-                    if (app && app.currentPage !== 'music') {
-                        this._pendingNpOpen = true;
-                        app.navigateTo('music');
-                        return;
-                    }
+                // Phase 13.9 — the corner mini player is a COMPACT CONTROLLER,
+                // not a gateway: tapping (or keyboard-activating) it reveals the
+                // full Now Playing overlay IN PLACE — play/pause, next/prev,
+                // seek, volume, favorites — without navigating to the Music
+                // Room. It drives the SAME MusicPlayerService / audio element;
+                // no second player is ever created, and playback state is
+                // untouched.
+                const openNowPlayingFromMini = () => {
+                    if (!this.player.current) return;
                     this._openNowPlaying();
                 };
                 mini.addEventListener('click', (e) => {
                     if (e.target.closest('button')) return;
-                    openMusicRoomFromMini();
+                    openNowPlayingFromMini();
                 });
                 mini.addEventListener('keydown', (e) => {
                     if (e.key !== 'Enter' && e.key !== ' ') return;
                     e.preventDefault();
-                    openMusicRoomFromMini();
+                    openNowPlayingFromMini();
                 });
             }
             if (this._els.miniPlay) {

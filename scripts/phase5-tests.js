@@ -67,6 +67,119 @@ const sanitize = sandbox.window.MusicSearch.sanitizeQuery;
 const normalizeQ = sandbox.window.MusicSearch.normalizeQuery;
 const U = sandbox.window.LoveHubMusicRoomUtils;
 
+// ---------------------------------------------------------------------------
+// Phase 13.9 — real-DOM tap harness. A SECOND sandbox that ships a minimal
+// `document` stub, so the actual MusicRoom controller gets constructed and we
+// can dispatch GENUINE click events on the real buttons (header Sleep/EQ, the
+// sleep rows, EQ presets, the corner mini player) and observe the real
+// handlers + sheet visibility — not just "handler exists" static checks.
+// ---------------------------------------------------------------------------
+
+function makeStubClassList() {
+    const set = new Set();
+    return {
+        _set: set,
+        add: (c) => set.add(c),
+        remove: (c) => set.delete(c),
+        toggle: (c, force) => {
+            if (force === undefined) { if (set.has(c)) set.delete(c); else set.add(c); }
+            else if (force) set.add(c);
+            else set.delete(c);
+        },
+        contains: (c) => set.has(c)
+    };
+}
+
+function makeStubEl(id) {
+    const listeners = {};
+    return {
+        id, listeners,
+        classList: makeStubClassList(),
+        style: { setProperty() {}, transform: '', backgroundImage: '', display: '' },
+        dataset: {},
+        value: '', innerHTML: '', textContent: '', title: '', _className: '',
+        set className(v) { this._className = v; },
+        get className() { return this._className; },
+        setAttribute() {}, getAttribute() { return null; },
+        addEventListener(ev, fn) { (listeners[ev] = listeners[ev] || []).push(fn); },
+        removeEventListener() {},
+        dispatch(ev, payload) {
+            (listeners[ev] || []).slice().forEach((fn) => { try { fn(payload || { target: this }); } catch (e) { /* ignore */ } });
+        },
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
+        appendChild() {}, removeChild() {}, focus() {},
+        closest() { return null; },
+        getContext() { return null; }
+    };
+}
+
+let domSandbox = null;
+function getDomSandbox() {
+    if (domSandbox) return domSandbox;
+    const elsById = new Map();
+    const elById = (id) => {
+        if (!elsById.has(id)) elsById.set(id, makeStubEl(id));
+        return elsById.get(id);
+    };
+    const sleepRows = [{ min: '0' }, { min: '15' }, { min: '30' }, { min: '45' }, { min: '60' }, { end: '1' }]
+        .map((d) => { const e = makeStubEl('sleepRow'); e.dataset = d; return e; });
+    const eqRows = ['normal', 'bass', 'vocal', 'classical', 'electronic', 'soft']
+        .map((p) => { const e = makeStubEl('eqRow'); e.dataset = { preset: p }; return e; });
+    const store = new Map();
+    const documentStub = {
+        getElementById: elById,
+        querySelector: () => elById('stubPage'),
+        querySelectorAll: (sel) => {
+            if (sel === '.music-sleep-row') return sleepRows;
+            if (sel === '.music-eq-row') return eqRows;
+            return [];
+        },
+        createElement: (tag) => makeStubEl(tag),
+        createDocumentFragment: () => makeStubEl('frag'),
+        addEventListener() {},
+        body: makeStubEl('body'),
+        documentElement: makeStubEl('html')
+    };
+    const base = {
+        console,
+        fetch: () => Promise.reject(new Error('fetch not mocked')),
+        AbortController,
+        Audio: FakeAudio,
+        setTimeout: () => 0,
+        clearTimeout: () => {},
+        setInterval: () => 0,
+        clearInterval: () => {},
+        localStorage: {
+            getItem: (k) => (store.has(k) ? store.get(k) : null),
+            setItem: (k, v) => store.set(k, String(v)),
+            removeItem: (k) => store.delete(k)
+        },
+        navigator: {},
+        matchMedia: () => ({ matches: false }),
+        Image: function Image() {},
+        document: documentStub
+    };
+    base.window = base;
+    base.window.app = {
+        currentPage: 'home',
+        navigateToCalls: [],
+        navigateTo(p) { this.navigateToCalls.push(p); this.currentPage = p; },
+        showToast() {}
+    };
+    vm.createContext(base);
+    vm.runInContext(fs.readFileSync('music-player.js', 'utf8'), base);
+    base.window.LoveHubMusicPlayer = new base.window.MusicPlayerService();
+    vm.runInContext(fs.readFileSync('music-search.js', 'utf8'), base);
+    // music-room.js sees `document` here, so it constructs the real controller.
+    vm.runInContext(fs.readFileSync('music-room.js', 'utf8'), base);
+    base.window.__sleepRows = sleepRows;
+    base.window.__eqRows = eqRows;
+    base.elById = elById;
+    domSandbox = base;
+    return base;
+}
+
 let failures = 0;
 let passes = 0;
 function assert(cond, name) {
@@ -85,6 +198,90 @@ const T3 = { title: 'T3', artist: 'B3', playableUrl: 'https://x/c.mp3', dedupeKe
 const NO_URL = { title: 'Unavailable', artist: 'X', playableUrl: null, dedupeKey: 'id4' };
 
 async function main() {
+    // =====================================================================
+    // Phase 13.9 — mini player = compact corner controller (never navigates),
+    // header Sleep/EQ real tap wiring, global fixed overlays.
+    // =====================================================================
+
+    await test('phase13.9: overlays are global (outside #musicPage) so Now Playing works from any page', () => {
+        const html = fs.readFileSync('index.html', 'utf8');
+        const secStart = html.indexOf('data-page="music"');
+        const secEnd = html.indexOf('</section>', secStart);
+        assert(secStart !== -1 && secEnd !== -1, 'music page section bounds found');
+        ['musicQueueSheet', 'musicNowPlaying', 'musicSleepSheet', 'musicEqSheet'].forEach((id) => {
+            const pos = html.indexOf('id="' + id + '"');
+            assert(pos !== -1 && pos > secEnd, id + ' is mounted OUTSIDE the #musicPage section');
+        });
+        assert(html.indexOf('id="miniPlayer"') > secEnd, 'mini player is global too (outside the Music page)');
+    });
+
+    await test('phase13.9: overlays are viewport-fixed — sheets can never scroll off-screen', () => {
+        const css = fs.readFileSync('music-room.css', 'utf8');
+        const q = css.slice(css.indexOf('.music-queue-overlay, .music-sheet-overlay {'), css.indexOf('.music-queue-overlay, .music-sheet-overlay {') + 300);
+        assert(/position:\s*fixed/.test(q), 'queue/sheet overlays use position: fixed');
+        const np = css.slice(css.indexOf('.music-np-overlay {'), css.indexOf('.music-np-overlay {') + 300);
+        assert(/position:\s*fixed/.test(np), 'Now Playing overlay uses position: fixed');
+    });
+
+    await test('phase13.9: no bottom / full-width mini player exists — only the corner controller', () => {
+        const css = fs.readFileSync('music-room.css', 'utf8');
+        const i = css.indexOf('.mini-player {');
+        const block = css.slice(i, i + 400);
+        assert(block.indexOf('left: auto;') !== -1, 'corner geometry (no full-width bottom bar)');
+        assert(block.indexOf('width: min(calc(100% - 32px), 320px)') !== -1, 'compact capped width');
+        assert(block.indexOf('right: calc(16px + env(safe-area-inset-right, 0px))') !== -1, 'anchored to the right corner');
+        const html = fs.readFileSync('index.html', 'utf8');
+        assert(html.split('id="miniPlayer"').length === 2, 'exactly ONE mini player element in the DOM');
+    });
+
+    await test('phase13.9: real tap on header Sleep Timer opens the sheet and options work', () => {
+        const D = getDomSandbox();
+        const MR = D.window.LoveHubMusicRoom;
+        const sleepSheet = D.elById('musicSleepSheet');
+        sleepSheet.classList._set.clear();
+        D.elById('musicSleepBtn').dispatch('click');
+        assert(sleepSheet.classList.contains('active'), 'sleep sheet becomes visible on a real header tap');
+        const row = D.window.__sleepRows.find((r) => r.dataset.min === '15');
+        row.dispatch('click');
+        assert(MR._sleep.mode === 'mins', 'a real option tap engages the sleep timer');
+        assert(MR._sleep.endsAt > Date.now(), 'deadline set in the future');
+        assert(!sleepSheet.classList.contains('active'), 'sheet closes after choosing an option');
+    });
+
+    await test('phase13.9: real tap on header Equalizer opens the sheet and presets apply', () => {
+        const D = getDomSandbox();
+        const MR = D.window.LoveHubMusicRoom;
+        const eqSheet = D.elById('musicEqSheet');
+        eqSheet.classList._set.clear();
+        D.elById('musicEqBtn').dispatch('click');
+        assert(eqSheet.classList.contains('active'), 'eq sheet becomes visible on a real header tap');
+        const bass = D.window.__eqRows.find((r) => r.dataset.preset === 'bass');
+        bass.dispatch('click');
+        assert(MR._eqPreset === 'bass', 'preset applied to the stored EQ state');
+        assert(D.elById('musicEqNote').style.display === '', 'graceful note shown when real EQ processing is unavailable');
+    });
+
+    await test('phase13.9: real tap on the corner mini player opens Now Playing — never navigates', async () => {
+        const D = getDomSandbox();
+        const MR = D.window.LoveHubMusicRoom;
+        const appStub = D.window.app;
+        const player = D.window.LoveHubMusicPlayer;
+        appStub.navigateToCalls.length = 0;
+        appStub.currentPage = 'home';
+        const np = D.elById('musicNowPlaying');
+        np.classList._set.clear();
+        await player.loadTrack({ title: 'X', artist: 'Y', playableUrl: 'https://x/a.mp3', dedupeKey: 'k1' }, { autoplay: false });
+        const mini = D.elById('miniPlayer');
+        mini.dispatch('click', { target: mini });
+        assert(appStub.navigateToCalls.length === 0, 'mini tap NEVER navigates to the Music Room');
+        assert(np.classList.contains('open'), 'mini tap reveals Now Playing in place');
+        assert(player.current && player.current.title === 'X', 'the same track stays loaded (no reload/restart)');
+        const audioBefore = player.getAudioElement ? player.getAudioElement() : null;
+        MR.onPageChanged('home');
+        assert(player.getAudioElement && player.getAudioElement() === audioBefore, 'leaving the Music Room keeps the SAME audio element');
+        assert(MR._npOpen === false, 'overlays close when leaving the Music Room');
+    });
+
     // =====================================================================
     // Phase 13.8 — header controls wiring + single corner mini player
     // =====================================================================
@@ -498,9 +695,18 @@ async function main() {
     // document.body/:root writes, and every overlay must be inside #musicPage.
     // ===========================================================================
 
-    await test('music-room.css has no position:fixed overlays', async () => {
+    await test('music-room.css: only the two full-screen overlay groups are position:fixed (Phase 13.9)', async () => {
         const css = fs.readFileSync('music-room.css', 'utf8');
-        assert(!css.includes('position: fixed'), 'no fixed positioning anywhere');
+        // Phase 13.9 — the three full-screen overlays (queue/sheet + Now
+        // Playing) are intentionally position:fixed so they anchor to the
+        // viewport from ANY page and can never scroll off-screen. Everything
+        // else must stay non-fixed (no stray fixed popups).
+        const fixedBlocks = css.match(/[^{}]*\{[^}]*position:\s*fixed[^}]*\}/g) || [];
+        assert(fixedBlocks.length === 2, 'exactly the two overlay groups use position: fixed (got ' + fixedBlocks.length + ')');
+        const q = fixedBlocks[0] || '';
+        const np = fixedBlocks[1] || '';
+        assert(q.indexOf('.music-queue-overlay') !== -1 && q.indexOf('.music-sheet-overlay') !== -1, 'first fixed group = queue/sheet overlays');
+        assert(np.indexOf('.music-np-overlay') !== -1, 'second fixed group = Now Playing overlay');
         assert(css.split('{').length === css.split('}').length, 'braces balanced');
     });
 
@@ -535,14 +741,15 @@ async function main() {
         assert(js.includes('host.appendChild(menu)'), 'more menu mounts inside the page');
     });
 
-    await test('index.html mounts all Music overlays inside #musicPage', async () => {
+    await test('index.html mounts all Music overlays GLOBALLY, outside #musicPage (Phase 13.9)', async () => {
         const html = fs.readFileSync('index.html', 'utf8');
         const idx = (id) => html.indexOf('id="' + id + '"');
         assert(idx('musicPage') > -1, 'musicPage exists');
-        const profile = html.indexOf('data-page="profile"');
+        const secStart = html.indexOf('data-page="music"');
+        const secEnd = html.indexOf('</section>', secStart);
         ['musicQueueSheet', 'musicNowPlaying', 'musicSleepSheet', 'musicEqSheet'].forEach((id) => {
             const i = idx(id);
-            assert(i > idx('musicPage') && i < profile, id + ' must be inside #musicPage');
+            assert(i > -1 && i > secEnd, id + ' is mounted OUTSIDE #musicPage (global, viewport-fixed)');
         });
         assert(!html.includes('class="np-'), 'no leftover np- classes in HTML');
     });
@@ -2221,12 +2428,15 @@ async function main() {
     // Phase 13.6 — Music Room final UX: single player architecture
     // =====================================================================
 
-    await test('phase13.6: mini player opens the Music Room (never the reverse)', () => {
+    await test('phase13.6/13.9: mini player reveals Now Playing in place (never navigates)', () => {
         const mr = fs.readFileSync('music-room.js', 'utf8');
-        assert(mr.indexOf("app.navigateTo('music')") !== -1, 'mini click navigates to the Music page');
-        assert(mr.indexOf('_pendingNpOpen = true') !== -1, 'Now Playing opens after arriving');
-        assert(mr.indexOf('_openNowPlaying()') !== -1, 'reveals the full player');
-        assert(mr.indexOf("mini.addEventListener('keydown'") !== -1, 'mini bar is keyboard accessible');
+        const i = mr.indexOf('const mini = this._els.mini;');
+        assert(i !== -1, 'mini binding block found');
+        const block = mr.slice(i, i + 1400);
+        assert(block.indexOf('navigateTo') === -1, 'mini tap path contains NO navigation');
+        assert(block.indexOf('_openNowPlaying()') !== -1, 'mini tap reveals the full Now Playing overlay');
+        assert(block.indexOf("mini.addEventListener('keydown'") !== -1, 'mini bar is keyboard accessible');
+        assert(mr.indexOf('_pendingNpOpen') === -1, 'no deferred-navigation flag remains');
         const html = fs.readFileSync('index.html', 'utf8');
         assert(/id="miniPlayer"[^>]*role="button"/.test(html), 'mini bar exposed as a button');
         assert(/id="miniPlayer"[^>]*tabindex="0"/.test(html), 'mini bar focusable');
@@ -2332,7 +2542,7 @@ async function main() {
         assert(bare.length === 0, 'icon buttons missing aria-label: ' + bare.join(' | '));
         assert(html.indexOf('aria-label="Seek"') !== -1 && html.indexOf('aria-label="Volume"') !== -1, 'sliders labelled');
         assert(html.indexOf('aria-label="Mute or unmute"') !== -1 && html.indexOf('aria-label="Play or pause"') !== -1, 'transport labelled');
-        assert(html.indexOf('aria-label="Open Music Room"') !== -1, 'mini bar labelled');
+        assert(html.indexOf('aria-label="Now Playing"') !== -1, 'mini bar labelled');
     });
 
     console.log('\nResults:', passes, 'passed,', failures, 'failed');

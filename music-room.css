@@ -430,8 +430,13 @@
 .music-more-item:active { background: rgba(255, 255, 255, 0.08); }
 
 /* ---- Queue sheet (8) ---- */
+/* Phase 13.9 — overlays are GLOBAL and fixed to the viewport. They were
+   position:absolute inside the scrollable .page[data-page="music"], so once
+   the Music Room was scrolled the sheets opened off-screen (clipped) on real
+   devices, looking like dead buttons. Fixed keeps them anchored regardless of
+   scroll, and outside the Music page they can overlay any page. */
 .music-queue-overlay, .music-sheet-overlay {
-    position: absolute; inset: 0; z-index: 900;
+    position: fixed; inset: 0; z-index: 900;
     background: rgba(0, 0, 0, 0.55);
     display: none; align-items: flex-end; justify-content: center;
     backdrop-filter: blur(6px);
@@ -497,8 +502,10 @@
 .music-queue-done:active { transform: scale(0.98); }
 
 /* ---- Now Playing overlay (5 / 7) ---- */
+/* Phase 13.9 — global + fixed so the mini player can reveal it from any page
+   (Home/Chat/…) without navigating to the Music Room. */
 .music-np-overlay {
-    position: absolute; inset: 0; z-index: 1200;
+    position: fixed; inset: 0; z-index: 1200;
     display: flex; flex-direction: column; align-items: center;
     background: rgba(8, 8, 10, 0.72);
     backdrop-filter: blur(46px) saturate(150%);
