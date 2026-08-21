@@ -123,15 +123,10 @@
         };
     }
 
-    // Phase 13 — the Music Room IS the main player. The global mini player is
-    // only a small controller for OUTSIDE the Music Room: it must never appear
-    // while the Music page (or its Now Playing overlay) is on screen.
-    function shouldShowMiniPlayer(opts) {
-        const o = opts || {};
-        if (!o.hasCurrent) return false;
-        if (o.page === 'music') return false;
-        if (o.npOpen) return false;
-        return true;
+    // The obsolete bottom/corner mini-player has been removed. Keep this pure
+    // helper for older cached shells: it guarantees they cannot resurrect it.
+    function shouldShowMiniPlayer() {
+        return false;
     }
 
     // Extract a small palette from raw RGBA pixels via color-bin histogram.
@@ -559,6 +554,12 @@
 
             if (this._els.fab) {
                 this._els.fab.addEventListener('click', () => {
+                    // The persistent music icon is now the only global player
+                    // entry point. Reveal Now Playing without changing pages.
+                    if (this.player.current) {
+                        this._openNowPlaying();
+                        return;
+                    }
                     const app = window.app;
                     if (app) app.navigateTo('music');
                     else this.showToast('Please login to open the Music Room');
@@ -1624,7 +1625,11 @@
 
         // ---- Lyrics (14) ----
 
-        _toggleLyrics() {
+        async _toggleLyrics() {
+            if (window.LoveHubLyrics && this.player.current) {
+                await window.LoveHubLyrics.openForTrack(this.player.current);
+                return;
+            }
             const panel = this._els.npLyricsPanel;
             if (!panel) return;
             const show = panel.style.display !== 'block';

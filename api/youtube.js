@@ -195,7 +195,42 @@ module.exports = async function handler(req, res) {
     }
 
     if (query) {
-        const items = (parsed.items || []).map(normalizeSearchItem).filter(Boolean);
+        let items = (parsed.items || []).map(normalizeSearchItem).filter(Boolean);
+        // search.list omits duration and embeddability. Enrich the entire batch
+        // with one videos.list call, and do not offer videos the official
+        // IFrame player is forbidden to embed.
+        if (items.length) {
+            const detailController = new AbortController();
+            const detailTimer = setTimeout(() => detailController.abort(), TIMEOUT_MS);
+            try {
+                const p = new URLSearchParams({
+                    part: 'contentDetails,status',
+                    id: items.map((item) => item.videoId).join(','),
+                    key: apiKey
+                });
+                const response = await fetch(UPSTREAM_BASE + '/videos?' + p.toString(), {
+                    signal: detailController.signal,
+                    headers: { Accept: 'application/json', 'User-Agent': 'LoveHub-YouTubeRelay/1.0' }
+                });
+                const detailsJson = JSON.parse(await response.text());
+                if (response.ok) {
+                    const details = new Map((detailsJson.items || []).map((item) => [item.id, item]));
+                    items = items.filter((item) => {
+                        const detail = details.get(item.videoId);
+                        return detail && (!detail.status || detail.status.embeddable !== false);
+                    }).map((item) => {
+                        const detail = details.get(item.videoId);
+                        return Object.assign(item, {
+                            durationSeconds: isoDurationToSeconds(detail.contentDetails && detail.contentDetails.duration)
+                        });
+                    });
+                }
+            } catch (_) {
+                // Search metadata remains useful if optional enrichment fails.
+            } finally {
+                clearTimeout(detailTimer);
+            }
+        }
         // Search results are stable enough to cache briefly — cuts quota usage
         // on repeat queries across users.
         sendJson(res, 200, { items }, 'public, s-maxage=300');

@@ -212,7 +212,7 @@ async function main() {
             const pos = html.indexOf('id="' + id + '"');
             assert(pos !== -1 && pos > secEnd, id + ' is mounted OUTSIDE the #musicPage section');
         });
-        assert(html.indexOf('id="miniPlayer"') > secEnd, 'mini player is global too (outside the Music page)');
+        assert(html.indexOf('id="miniPlayer"') === -1, 'obsolete mini player is absent');
     });
 
     await test('phase13.9: overlays are viewport-fixed — sheets can never scroll off-screen', () => {
@@ -231,7 +231,7 @@ async function main() {
         assert(block.indexOf('width: min(calc(100% - 32px), 320px)') !== -1, 'compact capped width');
         assert(block.indexOf('right: calc(16px + env(safe-area-inset-right, 0px))') !== -1, 'anchored to the right corner');
         const html = fs.readFileSync('index.html', 'utf8');
-        assert(html.split('id="miniPlayer"').length === 2, 'exactly ONE mini player element in the DOM');
+        assert(html.indexOf('id="miniPlayer"') === -1, 'mini player is removed from the DOM');
     });
 
     await test('phase13.9: real tap on header Sleep Timer opens the sheet and options work', () => {
@@ -311,10 +311,10 @@ async function main() {
         assert(block.indexOf('width: min(calc(100% - 32px), 320px)') !== -1, 'compact capped width');
         assert(block.indexOf('bottom: calc(var(--safe-b) + 186px)') !== -1, 'floats above the FAB stack (above the AI button)');
         const html = fs.readFileSync('index.html', 'utf8');
-        assert(html.split('id="miniPlayer"').length === 2, 'exactly ONE mini player element in the DOM');
+        assert(html.indexOf('id="miniPlayer"') === -1, 'mini player is removed from the DOM');
         const f = U.shouldShowMiniPlayer;
         assert(f({ hasCurrent: true, page: 'music', npOpen: false }) === false, 'hidden inside the Music Room');
-        assert(f({ hasCurrent: true, page: 'home', npOpen: false }) === true, 'visible outside Music Room as the controller');
+        assert(f({ hasCurrent: true, page: 'home', npOpen: false }) === false, 'obsolete controller remains hidden');
         assert(f({ hasCurrent: true, page: 'home', npOpen: true }) === false, 'never over Now Playing');
     });
 
@@ -2358,8 +2358,8 @@ async function main() {
         assert(typeof f === 'function', 'helper exported');
         assert(f({ hasCurrent: true, page: 'music', npOpen: false }) === false, 'never inside Music Room');
         assert(f({ hasCurrent: true, page: 'music', npOpen: true }) === false, 'never while Now Playing is open');
-        assert(f({ hasCurrent: true, page: 'home', npOpen: false }) === true, 'shows outside Music Room');
-        assert(f({ hasCurrent: true, page: 'chat', npOpen: false }) === true, 'shows on chat page');
+        assert(f({ hasCurrent: true, page: 'home', npOpen: false }) === false, 'does not show outside Music Room');
+        assert(f({ hasCurrent: true, page: 'chat', npOpen: false }) === false, 'does not show on chat page');
         assert(f({ hasCurrent: false, page: 'home', npOpen: false }) === false, 'nothing to show without a track');
         assert(f({ hasCurrent: true, page: 'home', npOpen: true }) === false, 'never over the Now Playing overlay');
     });
@@ -2391,8 +2391,8 @@ async function main() {
         assert(mr.indexOf('new MusicPlayerService(') === -1, 'Music Room never creates a second player');
         assert(mr.indexOf('new Audio(') === -1, 'Music Room never creates a second <audio>');
         const html = fs.readFileSync('index.html', 'utf8');
-        assert(html.indexOf('id="miniPlayer"') !== -1, 'one global mini player element only');
-        assert(html.split('miniPlayer').length === 2, 'no duplicate mini player markup');
+        assert(html.indexOf('id="miniPlayer"') === -1, 'global mini player removed');
+        assert(html.indexOf('id="miniPlayer"') === -1, 'no mini player markup');
     });
 
     await test('phase13.5: volume controls exist and are wired', () => {
@@ -2413,7 +2413,7 @@ async function main() {
             'npPlay', 'npPrev', 'npNext', 'npShuffle', 'npRepeat', 'npFav', 'npShare', 'npQueue',
             'npEq', 'npSleep', 'npLyrics', 'npClose', 'npMute', 'npVolume', 'npMore',
             'musicQueueBtn', 'musicQueueClear', 'musicQueueDone', 'musicQueueShuffle',
-            'musicSleepBtn', 'musicEqBtn', 'playBtn', 'miniNext', 'miniFav',
+            'musicSleepBtn', 'musicEqBtn', 'musicFab',
             'musicSearchBtn', 'musicSearchClear'];
         const missing = ids.filter((id) => html.indexOf('id="' + id + '"') === -1);
         assert(missing.length === 0, 'all player/queue/search controls present: ' + (missing.join(',') || 'none missing'));
@@ -2439,8 +2439,8 @@ async function main() {
         assert(block.indexOf("mini.addEventListener('keydown'") !== -1, 'mini bar is keyboard accessible');
         assert(mr.indexOf('_pendingNpOpen') === -1, 'no deferred-navigation flag remains');
         const html = fs.readFileSync('index.html', 'utf8');
-        assert(/id="miniPlayer"[^>]*role="button"/.test(html), 'mini bar exposed as a button');
-        assert(/id="miniPlayer"[^>]*tabindex="0"/.test(html), 'mini bar focusable');
+        assert(/id="musicFab"[^>]*aria-label="Open music player"/.test(html), 'music icon exposes the player action');
+        assert(/<button[^>]*id="musicFab"/.test(html), 'music player entry point is a native button');
     });
 
     await test('phase13.6: leaving the Music Room re-exposes the global mini player', () => {
@@ -2448,7 +2448,7 @@ async function main() {
         assert(mr.indexOf('onPageChanged(page)') !== -1, 'page-change hook exists');
         assert(mr.indexOf('_updateMiniPlayer()') !== -1, 'mini visibility refreshed on page change');
         const f = U.shouldShowMiniPlayer;
-        assert(f({ hasCurrent: true, page: 'home', npOpen: false }) === true, 'mini visible outside Music Room while playing');
+        assert(f({ hasCurrent: true, page: 'home', npOpen: false }) === false, 'mini remains hidden while playing');
         assert(f({ hasCurrent: true, page: 'music', npOpen: false }) === false, 'mini hidden inside Music Room');
         assert(f({ hasCurrent: true, page: 'music', npOpen: true }) === false, 'mini hidden over Now Playing');
     });
@@ -2504,7 +2504,7 @@ async function main() {
         const mp = fs.readFileSync('music-player.js', 'utf8');
         assert((mp.match(/new Audio\(/g) || []).length === 1, 'exactly one <audio> in the whole engine');
         const html = fs.readFileSync('index.html', 'utf8');
-        assert(html.split('id="miniPlayer"').length === 2, 'one global mini player element');
+        assert(html.indexOf('id="miniPlayer"') === -1, 'global mini player is absent');
     });
 
     await test('phase13.6: no horizontal overflow on iPhone viewports', () => {
@@ -2543,7 +2543,7 @@ async function main() {
         assert(bare.length === 0, 'icon buttons missing aria-label: ' + bare.join(' | '));
         assert(html.indexOf('aria-label="Seek"') !== -1 && html.indexOf('aria-label="Volume"') !== -1, 'sliders labelled');
         assert(html.indexOf('aria-label="Mute or unmute"') !== -1 && html.indexOf('aria-label="Play or pause"') !== -1, 'transport labelled');
-        assert(html.indexOf('aria-label="Now Playing"') !== -1, 'mini bar labelled');
+        assert(html.indexOf('aria-label="Open music player"') !== -1, 'music player entry point labelled');
     });
 
     console.log('\nResults:', passes, 'passed,', failures, 'failed');

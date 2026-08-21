@@ -5,18 +5,11 @@
 // Room. Telegram has NO global music search API, so we search WITHIN a
 // curated list of verified public Persian-music channels.
 //
-// TEMPORARY PROVIDER GUARD (Aug 21 2026): live production QA confirmed the
-// configured Apify account returns "Monthly usage hard limit exceeded".
-// Fast-failing here avoids making every LoveHub search wait on a known-dead
-// upstream. Keep the provider code intact so it can be re-enabled with one
-// constant flip after Apify quota/billing is restored.
-
 'use strict';
 
 const APIFY_API = 'https://api.apify.com/v2';
 const ACTOR_ID = 'crawlerbros~telegram-public-channels-scraper';
 const TIMEOUT_MS = 22000;
-const TELEGRAM_TEMP_DISABLED = true;
 
 const CHANNELS = [
     'RadioJavan',
@@ -87,14 +80,6 @@ module.exports = async function handler(req, res) {
         return;
     }
 
-    if (TELEGRAM_TEMP_DISABLED) {
-        sendJson(res, 503, {
-            error: 'TELEGRAM_PROVIDER_TEMPORARILY_DISABLED',
-            provider: 'telegram',
-            detail: 'Apify monthly usage hard limit is currently exhausted'
-        });
-        return;
-    }
 
     const token = process.env.APIFY_API_TOKEN || '';
     if (!token) {
