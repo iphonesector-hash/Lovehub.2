@@ -1,7 +1,7 @@
 /* LoveHub service worker — Phase 3.
  *
  * Strategy:
- *   - Versioned cache ("lovehub-v6").
+ *   - Versioned cache ("lovehub-v7").
  *   - PRECACHE on install: the complete active app runtime, including the
  *     ES-module service layer. Reinstalling an updated worker overwrites the
  *     same request keys with fresh responses, preventing iOS/Safari from
@@ -15,7 +15,7 @@
 
 // Compatibility marker for the existing regression assertion:
 // CACHE_NAME = 'lovehub-v4'
-const CACHE_NAME = 'lovehub-v6';
+const CACHE_NAME = 'lovehub-v7';
 const PRECACHE_URLS = [
     './',
     './index.html',
@@ -55,6 +55,7 @@ const PRECACHE_URLS = [
     './src/services/ChatService.js',
     './src/services/MusicService.js',
     './src/services/ItunesMusicProvider.js',
+    './src/services/MusicRoomEnhancer.js',
     './src/services/LyricsService.js',
     './src/services/NotificationService.js',
     './src/services/SoundService.js',
