@@ -37,7 +37,7 @@ class SupabaseService {
     }
 
     async login(email, password) {
-        if (!this.ready) return { success: false, error: 'Backend not configured' };
+        if (!this.ready) return { success: false, error: error?.message };
         const { data, error } = await this.client.auth.signInWithPassword({ email, password });
         if (error) return { success: false, error: error.message };
         return { success: true, session: data.session, user: data.user };
@@ -109,11 +109,13 @@ class SupabaseService {
         return { success: true, room: data };
     }
 
-    async joinRoomByCode(roomCode, profileId) {
-        const { data: room, error } = await this.client
-            .from('game_rooms').select('*').eq('room_code', roomCode).eq('status', 'waiting').single();
-        if (error || !room) return { success: false, error: 'Room not found' };
-        await this.client.from('room_players').insert({ room_id: room.id, profile_id: profileId });
+    async joinRoomByCode(roomCode) {
+        const { data, error } = await this.client.rpc('join_room_by_code', {
+            p_room_code: roomCode
+        });
+        if (error) return { success: false, error: error.message };
+        const room = Array.isArray(data) ? data[0] : data;
+        if (!room) return { success: false, error: 'Room not found' };
         return { success: true, room };
     }
 
