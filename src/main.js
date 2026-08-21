@@ -4,6 +4,7 @@
 
 import { installIcons } from './icons/IconService.js';
 import { AuthService } from './services/AuthService.js';
+import { installUsernameLoginFallback } from './services/UsernameLoginBridge.js';
 import { ProfileService } from './services/ProfileService.js';
 import { CoupleService } from './services/CoupleService.js';
 import { ChatService } from './services/ChatService.js';
@@ -17,6 +18,7 @@ import { installItunesMusicProviderWhenReady } from './services/ItunesMusicProvi
 
 installIcons();
 installItunesMusicProviderWhenReady();
+installUsernameLoginFallback(AuthService);
 
 const loveHubAuth = new AuthService();
 const loveHubProfile = new ProfileService();
