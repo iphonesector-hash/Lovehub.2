@@ -51,6 +51,7 @@ const PRECACHE_URLS = [
     './src/services/CoupleService.js',
     './src/services/ChatService.js',
     './src/services/MusicService.js',
+    './src/services/ItunesMusicProvider.js',
     './src/services/NotificationService.js',
     './src/services/SoundService.js',
     './src/onboarding/OnboardingFlow.js',
