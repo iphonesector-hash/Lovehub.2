@@ -9,6 +9,10 @@
 
 import { supabaseClient, isSupabaseReady } from './SupabaseClient.js';
 
+const AVATAR_BUCKET = 'avatars';
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+const AVATAR_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
 // Columns the app may write from the client. RLS lets owners update their
 // whole row, but we never touch protected/system columns (id, username...).
 const WRITABLE = [
@@ -19,6 +23,16 @@ const WRITABLE = [
     // Phase 5 — profile personalisation (migration 0009)
     'mood', 'profile_theme'
 ];
+
+function avatarExtension(file) {
+    const byType = {
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp',
+        'image/gif': 'gif'
+    };
+    return byType[file?.type] || 'jpg';
+}
 
 export class ProfileService {
     isReady() {
@@ -77,6 +91,56 @@ export class ProfileService {
             .single();
         if (error) return { success: false, error: error.message };
         return { success: true, profile: data };
+    }
+
+    async uploadAvatar(userId, file) {
+        if (!this.isReady()) return { success: false, error: 'Backend not configured' };
+        if (!userId || !file) return { success: false, error: 'No image selected' };
+        if (!AVATAR_TYPES.has(file.type)) return { success: false, error: 'Unsupported image type' };
+        if (file.size > AVATAR_MAX_BYTES) return { success: false, error: 'Avatar must be 5 MB or smaller' };
+
+        const path = `${userId}/avatar.${avatarExtension(file)}`;
+        try {
+            const { error: uploadError } = await supabaseClient.storage
+                .from(AVATAR_BUCKET)
+                .upload(path, file, {
+                    upsert: true,
+                    contentType: file.type,
+                    cacheControl: '3600'
+                });
+            if (uploadError) return { success: false, error: uploadError.message };
+
+            const { data: publicData } = supabaseClient.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+            const publicUrl = publicData?.publicUrl;
+            if (!publicUrl) return { success: false, error: 'Could not resolve avatar URL' };
+
+            // Cache-bust replacements while keeping one stable object per user.
+            const avatarUrl = `${publicUrl}?v=${Date.now()}`;
+            const updated = await this.updateProfile(userId, { avatar_url: avatarUrl });
+            if (!updated.success) return updated;
+            return { success: true, profile: updated.profile, avatarUrl };
+        } catch (error) {
+            return { success: false, error: error.message || String(error) };
+        }
+    }
+
+    async removeAvatar(userId, currentAvatarUrl = null) {
+        if (!this.isReady()) return { success: false, error: 'Backend not configured' };
+        if (!userId) return { success: false, error: 'No user' };
+
+        try {
+            // Remove all supported stable avatar filenames so a previous format
+            // cannot remain publicly addressable after the profile clears it.
+            const paths = ['jpg', 'png', 'webp', 'gif'].map((ext) => `${userId}/avatar.${ext}`);
+            const { error: removeError } = await supabaseClient.storage.from(AVATAR_BUCKET).remove(paths);
+            if (removeError) console.warn('[ProfileService] avatar object cleanup:', removeError.message);
+
+            const updated = await this.updateProfile(userId, { avatar_url: null });
+            if (!updated.success) return updated;
+            return { success: true, profile: updated.profile };
+        } catch (error) {
+            return { success: false, error: error.message || String(error) };
+        }
     }
 
     async markOnboardingComplete(userId) {
