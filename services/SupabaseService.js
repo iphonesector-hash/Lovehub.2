@@ -109,20 +109,20 @@ class SupabaseService {
         return { success: true, room: data };
     }
 
-    async joinRoomByCode(roomCode, profileId) {
-        const { data: room, error } = await this.client
-            .from('game_rooms').select('*').eq('room_code', roomCode).eq('status', 'waiting').single();
-        if (error || !room) return { success: false, error: 'Room not found' };
-        await this.client.from('room_players').insert({ room_id: room.id, profile_id: profileId });
+    async joinRoomByCode(roomCode) {
+        const { data, error } = await this.client.rpc('join_room_by_code', {
+            p_room_code: roomCode
+        });
+        if (error) return { success: false, error: error.message };
+        const room = Array.isArray(data) ? data[0] : data;
+        if (!room) return { success: false, error: 'Room not found' };
         return { success: true, room };
     }
 
     async findOpenRoom(gameId) {
-        const { data, error } = await this.client
-            .from('game_rooms')
-            .select('*, room_players(count)')
-            .eq('game_id', gameId).eq('status', 'waiting').eq('is_private', false)
-            .limit(1);
+        const { data, error } = await this.client.rpc('find_open_room', {
+            p_game_id: gameId
+        });
         if (error || !data?.length) return null;
         return data[0];
     }
