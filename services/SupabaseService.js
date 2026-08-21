@@ -37,7 +37,7 @@ class SupabaseService {
     }
 
     async login(email, password) {
-        if (!this.ready) return { success: false, error: error?.message };
+        if (!this.ready) return { success: false, error: 'Backend not configured' };
         const { data, error } = await this.client.auth.signInWithPassword({ email, password });
         if (error) return { success: false, error: error.message };
         return { success: true, session: data.session, user: data.user };
