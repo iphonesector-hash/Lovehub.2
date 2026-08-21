@@ -75,6 +75,66 @@ if (loveHubAuth.isReady()) {
     loveHubAuth.initialize();
 }
 
+// Security hardening for the legacy account-settings modal. app.js historically
+// collected the current password but discarded it for real Supabase users.
+// Capture the click before the legacy bubble listener and route real accounts
+// through AuthService.changePassword(), which reauthenticates first. Demo users
+// continue through the unchanged legacy handler in app.js.
+const passwordSubmit = document.getElementById('submitChangePassword');
+if (passwordSubmit) {
+    passwordSubmit.addEventListener('click', async (event) => {
+        if (!loveHubAuth.isReady() || !loveHubAuth.isSupabaseUser()) return;
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        const app = getApp();
+        const current = document.getElementById('currentPassword')?.value || '';
+        const newPass = document.getElementById('newPassword')?.value || '';
+        const confirmPass = document.getElementById('confirmPassword')?.value || '';
+
+        if (!current || !newPass || !confirmPass) {
+            app?.showToast?.('Please fill all fields');
+            return;
+        }
+        if (newPass !== confirmPass) {
+            app?.showToast?.('Passwords do not match');
+            return;
+        }
+        if (newPass.length < 6) {
+            app?.showToast?.('Password must be at least 6 characters');
+            return;
+        }
+        if (newPass === current) {
+            app?.showToast?.('New password must be different');
+            return;
+        }
+
+        const previousText = passwordSubmit.textContent;
+        passwordSubmit.disabled = true;
+        passwordSubmit.textContent = 'Changing...';
+        try {
+            const result = await loveHubAuth.changePassword(current, newPass);
+            if (!result.success) {
+                app?.showToast?.(result.error || 'Could not change password');
+                return;
+            }
+
+            document.getElementById('changePasswordModal')?.classList.remove('active');
+            const currentField = document.getElementById('currentPassword');
+            const newField = document.getElementById('newPassword');
+            const confirmField = document.getElementById('confirmPassword');
+            if (currentField) currentField.value = '';
+            if (newField) newField.value = '';
+            if (confirmField) confirmField.value = '';
+            app?.showToast?.('Password changed successfully');
+        } finally {
+            passwordSubmit.disabled = false;
+            passwordSubmit.textContent = previousText || 'Change Password';
+        }
+    }, true);
+}
+
 // Phase 3 — service worker: offline shell + asset caching (sw.js). Safe in
 // every modern browser (https or localhost); guarded so a missing SW API can
 // never break the app.
