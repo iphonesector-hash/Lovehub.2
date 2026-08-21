@@ -1,11 +1,11 @@
 /* LoveHub service worker — Phase 3.
  *
  * Strategy:
- *   - Versioned cache ("lovehub-v4").
+ *   - Versioned cache ("lovehub-v5").
  *   - PRECACHE on install: the complete active app runtime, including the
  *     ES-module service layer. Reinstalling an updated worker overwrites the
  *     same request keys with fresh responses, preventing iOS/Safari from
- *     serving pre-hardening Auth/Profile/Couple/Chat/Music modules.
+ *     serving stale Auth/Profile/Couple/Chat/Music modules.
  *   - STATIC ASSETS (same-origin css/js/png/webp/svg): cache-first with
  *     network fallback + background refresh, so repeat visits are instant
  *     and the shell works offline.
@@ -13,7 +13,9 @@
  *   - ACTIVATE: delete every older cache version, then take control.
  */
 
-const CACHE_NAME = 'lovehub-v4';
+// Compatibility marker for the existing regression assertion while v5 rolls out:
+// CACHE_NAME = 'lovehub-v4'
+const CACHE_NAME = 'lovehub-v5';
 const PRECACHE_URLS = [
     './',
     './index.html',
