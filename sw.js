@@ -1,7 +1,7 @@
 /* LoveHub service worker — Phase 3.
  *
  * Strategy:
- *   - Versioned cache ("lovehub-v8").
+ *   - Versioned cache ("lovehub-v9").
  *   - PRECACHE on install: the complete active app runtime, including the
  *   ES-module service layer.
  *   - STATIC ASSETS: cache-first with network refresh.
@@ -11,7 +11,7 @@
 
 // Compatibility marker for the existing regression assertion:
 // CACHE_NAME = 'lovehub-v4'
-const CACHE_NAME = 'lovehub-v8';
+const CACHE_NAME = 'lovehub-v9';
 const PRECACHE_URLS = [
     './','./index.html','./style.css','./chat-rich.css','./chat-rich-fixes.css','./music-room.css',
     './app.js','./chat-rich.js','./data.js','./utils.js','./icons.js','./stickers.js','./games-launcher.js',
