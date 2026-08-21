@@ -114,8 +114,9 @@ export class CoupleService {
         return error ? [] : (data || []);
     }
 
-    // Pending requests for my couple, enriched with the requester's
-    // PUBLIC profile (full profile is hidden until approval by design).
+    // Pending requests for my couple, enriched with the requester's safe
+    // public subset. A pending requester is not a confirmed partner yet, so
+    // the normal profiles RLS intentionally cannot expose their full row.
     async getPendingRequests(coupleId) {
         if (!this.isReady()) return [];
         const { data, error } = await supabaseClient
@@ -128,12 +129,11 @@ export class CoupleService {
 
         const enriched = [];
         for (const req of data || []) {
-            const { data: pub } = await supabaseClient
-                .from('profiles_public')
-                .select('*')
-                .eq('id', req.requester_id)
-                .maybeSingle();
-            enriched.push({ ...req, requester: pub });
+            const { data: pub, error: profileError } = await supabaseClient.rpc('get_public_profile', {
+                p_user_id: req.requester_id
+            });
+            const requester = profileError ? null : (Array.isArray(pub) ? (pub[0] || null) : (pub || null));
+            enriched.push({ ...req, requester });
         }
         return enriched;
     }
