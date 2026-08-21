@@ -12,8 +12,10 @@ import { NotificationService } from './services/NotificationService.js';
 import { SoundService } from './services/SoundService.js';
 import { OnboardingFlow } from './onboarding/OnboardingFlow.js';
 import { getInitStatus } from './services/SupabaseClient.js';
+import { installItunesMusicProviderWhenReady } from './services/ItunesMusicProvider.js';
 
 installIcons();
+installItunesMusicProviderWhenReady();
 
 const loveHubAuth = new AuthService();
 const loveHubProfile = new ProfileService();
