@@ -1,17 +1,16 @@
 /* LoveHub service worker — Phase 3.
  *
- * Strategy (Phase 3, additive — the previous file only handled
- * notifications and had no caching at all):
- *   - Versioned cache ("lovehub-v4"). Bump the version to invalidate.
- *   - PRECACHE on install: the app shell (HTML, CSS, JS, images, icons).
+ * Strategy:
+ *   - Versioned cache ("lovehub-v4").
+ *   - PRECACHE on install: the complete active app runtime, including the
+ *     ES-module service layer. Reinstalling an updated worker overwrites the
+ *     same request keys with fresh responses, preventing iOS/Safari from
+ *     serving pre-hardening Auth/Profile/Couple/Chat/Music modules.
  *   - STATIC ASSETS (same-origin css/js/png/webp/svg): cache-first with
  *     network fallback + background refresh, so repeat visits are instant
  *     and the shell works offline.
- *   - NAVIGATION: network-first, falling back to the cached index.html for
- *     full offline support.
+ *   - NAVIGATION: network-first, falling back to the cached index.html.
  *   - ACTIVATE: delete every older cache version, then take control.
- *   - Notification shell preserved: notificationclick focuses/deep-links;
- *     the push handler is still a stub until VAPID is wired up.
  */
 
 const CACHE_NAME = 'lovehub-v4';
@@ -21,12 +20,41 @@ const PRECACHE_URLS = [
     './style.css',
     './chat-rich.css',
     './chat-rich-fixes.css',
+    './music-room.css',
+
+    // Classic runtime.
     './app.js',
     './chat-rich.js',
     './data.js',
     './utils.js',
     './icons.js',
     './stickers.js',
+    './games-launcher.js',
+    './music-search.js',
+    './music-player.js',
+    './music-visualizer.js',
+    './music-room.js',
+
+    // Legacy/demo services still loaded by index.html for the explicit demo
+    // fallback. They must stay in sync with the shell as well.
+    './services/StorageService.js',
+    './services/AuthService.js',
+    './services/UserService.js',
+    './services/HealthService.js',
+
+    // Active Supabase ES-module runtime.
+    './src/main.js',
+    './src/icons/IconService.js',
+    './src/services/SupabaseClient.js',
+    './src/services/AuthService.js',
+    './src/services/ProfileService.js',
+    './src/services/CoupleService.js',
+    './src/services/ChatService.js',
+    './src/services/MusicService.js',
+    './src/services/NotificationService.js',
+    './src/services/SoundService.js',
+    './src/onboarding/OnboardingFlow.js',
+
     './assets/images/lovehub-icon.png',
     './assets/images/lovehub-icon.webp',
     './assets/images/lovehub-logo.png',
@@ -108,18 +136,5 @@ self.addEventListener('notificationclick', (event) => {
     );
 });
 
-// ---- Future Web Push (VAPID) ----------------------------------------------
-// When a push service is wired up, replace this handler with:
-//
-//   self.addEventListener('push', (event) => {
-//       const data = event.data ? event.data.json() : {};
-//       event.waitUntil(
-//           self.registration.showNotification(
-//               data.title || 'LoveHub',
-//               { body: data.body || '', icon: 'assets/images/lovehub-icon.png', data: { url: data.url } }
-//           )
-//       );
-//   });
-//
-// See supabase/README.md → "Push notifications (Android / Web Push)".
+// Future Web Push (VAPID). See supabase/README.md.
 self.addEventListener('push', () => { /* placeholder — VAPID not configured yet */ });
