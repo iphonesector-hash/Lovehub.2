@@ -6,16 +6,21 @@ import { supabaseClient, isSupabaseReady, getInitStatus } from './SupabaseClient
 
 const EMAIL_MAP_KEY = 'usernameEmails';
 
-// Build the redirect URL used in Supabase email-confirmation / password-reset
-// links. The app may be served under a sub-path or land on /index.html, so
-// normalize to a stable app-root URL — it must match a Supabase Auth
-// "Redirect URLs" allowlist entry exactly.
 function buildRedirectUrl() {
     if (typeof location === 'undefined' || !location.origin) return undefined;
     let path = location.pathname || '/';
     if (path.endsWith('index.html')) path = path.slice(0, -'index.html'.length);
     if (!path.endsWith('/')) path += '/';
     return `${location.origin}${path}`;
+}
+
+function getPublicSupabaseConfig() {
+    try {
+        if (typeof SUPABASE_CONFIG !== 'undefined' && SUPABASE_CONFIG?.url && SUPABASE_CONFIG?.anonKey) {
+            return SUPABASE_CONFIG;
+        }
+    } catch (_) { /* global may not exist */ }
+    return null;
 }
 
 export class AuthService {
@@ -25,24 +30,15 @@ export class AuthService {
         this._initializePromise = null;
     }
 
-    isReady() {
-        return isSupabaseReady();
-    }
-
-    getInitStatus() {
-        return getInitStatus();
-    }
-
-    // ---------------- username <-> email map ----------------
+    isReady() { return isSupabaseReady(); }
+    getInitStatus() { return getInitStatus(); }
 
     getEmailFor(username) {
         const map = storage.get(EMAIL_MAP_KEY) || {};
         return map[(username || '').toLowerCase().trim()] || null;
     }
 
-    hasEmailFor(username) {
-        return !!this.getEmailFor(username);
-    }
+    hasEmailFor(username) { return !!this.getEmailFor(username); }
 
     rememberEmail(username, email) {
         const key = (username || '').toLowerCase().trim();
@@ -53,25 +49,15 @@ export class AuthService {
         storage.set(EMAIL_MAP_KEY, map);
     }
 
-    // ---------------- session lifecycle ----------------
+    setSession(session) { this.session = session || null; }
 
-    setSession(session) {
-        this.session = session || null;
-    }
-
-    // Supabase is the source of truth whenever it is configured. The legacy
-    // demo IDs are intentionally not treated as Supabase sessions.
     isSupabaseUser() {
         return !!this.session?.user && this.session.user.id !== 'user1' && this.session.user.id !== 'user2';
     }
 
-    // One shared boot promise prevents app.js and main.js from racing to read
-    // the persisted session independently.
     initialize() {
         if (!this.isReady()) return Promise.resolve(null);
-        if (!this._initializePromise) {
-            this._initializePromise = this.getSession();
-        }
+        if (!this._initializePromise) this._initializePromise = this.getSession();
         return this._initializePromise;
     }
 
@@ -108,12 +94,9 @@ export class AuthService {
         }
     }
 
-    // Install exactly one listener for the lifetime of the app. Returning the
-    // same cleanup function makes accidental repeated setup harmless.
     onAuthStateChange(callback) {
         if (!this.isReady()) return () => {};
         if (this._unsubscribe) return this._unsubscribe;
-
         const { data } = supabaseClient.auth.onAuthStateChange((event, session) => {
             this.session = session || null;
             callback(event, session || null);
@@ -127,36 +110,66 @@ export class AuthService {
         return unsubscribe;
     }
 
-    // ---------------- auth actions ----------------
+    async checkUsernameAvailability(username) {
+        const value = (username || '').trim().toLowerCase();
+        if (!/^[a-z0-9._-]{2,40}$/i.test(value)) {
+            return { success: false, available: false, error: 'Username must be 2-40 characters and use only letters, numbers, dot, dash or underscore.' };
+        }
+        const config = getPublicSupabaseConfig();
+        const baseUrl = config?.url?.replace(/\/$/, '');
+        const anonKey = config?.anonKey;
+        if (!baseUrl || !anonKey) return { success: false, available: false, error: 'Backend not configured' };
+        try {
+            const response = await fetch(`${baseUrl}/functions/v1/username-login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', apikey: anonKey },
+                body: JSON.stringify({ action: 'check-username', username: value })
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) return { success: false, available: false, error: payload?.error || 'Could not check username' };
+            return { success: true, available: !!payload.available };
+        } catch (error) {
+            return { success: false, available: false, error: error?.message || 'Could not check username' };
+        }
+    }
 
     async signUp({ email, password, username, displayName }) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
-
+        const normalizedUsername = (username || '').toLowerCase().trim();
         try {
+            const availability = await this.checkUsernameAvailability(normalizedUsername);
+            if (!availability.success) return { success: false, error: availability.error };
+            if (!availability.available) return { success: false, error: 'Username is already taken. Please choose another one.' };
+
             const { data, error } = await supabaseClient.auth.signUp({
                 email: email.trim().toLowerCase(),
                 password,
                 options: {
                     data: {
-                        username: (username || '').toLowerCase().trim(),
+                        username: normalizedUsername,
                         display_name: displayName
                     },
                     emailRedirectTo: buildRedirectUrl()
                 }
             });
-            if (error) return { success: false, error: error.message };
+            if (error) {
+                const message = /database error saving new user/i.test(error.message || '')
+                    ? 'Could not create account. Please choose a different username and try again.'
+                    : error.message;
+                return { success: false, error: message };
+            }
 
             this.session = data?.session || null;
-            this.rememberEmail(username, email);
+            this.rememberEmail(normalizedUsername, email);
             return {
                 success: true,
                 needsEmailConfirmation: !data?.session,
                 user: data?.session && data?.user
                     ? {
                         id: data.user.id,
-                        username,
-                        name: displayName || username,
-                        initial: (displayName || username || '?')[0]?.toUpperCase()
+                        username: normalizedUsername,
+                        name: displayName || normalizedUsername,
+                        initial: (displayName || normalizedUsername || '?')[0]?.toUpperCase()
                     }
                     : null,
                 rawUser: data?.user || null
@@ -166,24 +179,16 @@ export class AuthService {
         }
     }
 
-    // The UI keeps username login. On another device, an email may also be
-    // entered directly; this avoids making the local username map a security
-    // or availability dependency for a real Supabase account.
     async signInWithUsername(identifier, password) {
         const value = (identifier || '').trim();
         const email = value.includes('@') ? value.toLowerCase() : this.getEmailFor(value);
         if (!email) return { success: false, error: 'No account found for that username.' };
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
-
         try {
             const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
             if (error) {
                 if (/not confirmed/i.test(error.message)) {
-                    return {
-                        success: false,
-                        needsConfirmation: true,
-                        error: 'Please confirm your email before logging in (check your inbox).'
-                    };
+                    return { success: false, needsConfirmation: true, error: 'Please confirm your email before logging in (check your inbox).' };
                 }
                 return { success: false, error: error.message };
             }
@@ -209,16 +214,13 @@ export class AuthService {
     async resetPasswordForEmail(email) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
         try {
-            const { error } = await supabaseClient.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-                redirectTo: buildRedirectUrl()
-            });
+            const { error } = await supabaseClient.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo: buildRedirectUrl() });
             return { success: !error, error: error?.message };
         } catch (error) {
             return { success: false, error: error.message || String(error) };
         }
     }
 
-    // Recovery-link flow: the recovery session itself is the authorization.
     async updatePassword(newPassword) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
         try {
@@ -229,30 +231,17 @@ export class AuthService {
         }
     }
 
-    // Account-settings flow: verify the current credential before changing the
-    // password. This intentionally uses signInWithPassword instead of relying
-    // on newer SDK-only currentPassword options, so it works with LoveHub's
-    // vendored Supabase client too.
     async changePassword(currentPassword, newPassword) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
         if (!currentPassword) return { success: false, error: 'Current password is required' };
         if (!newPassword) return { success: false, error: 'New password is required' };
-
         try {
             const user = await this.getUser();
             const email = user?.email || this.session?.user?.email;
             if (!email) return { success: false, error: 'Could not resolve the account email' };
-
-            const { data: reauthData, error: reauthError } = await supabaseClient.auth.signInWithPassword({
-                email,
-                password: currentPassword
-            });
-            if (reauthError) {
-                return { success: false, error: 'Current password is incorrect' };
-            }
-
+            const { data: reauthData, error: reauthError } = await supabaseClient.auth.signInWithPassword({ email, password: currentPassword });
+            if (reauthError) return { success: false, error: 'Current password is incorrect' };
             if (reauthData?.session) this.session = reauthData.session;
-
             const { data, error } = await supabaseClient.auth.updateUser({ password: newPassword });
             if (error) return { success: false, error: error.message };
             return { success: true, user: data?.user || null };
