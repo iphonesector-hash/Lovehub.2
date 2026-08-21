@@ -37,8 +37,12 @@ jobs:
             src/services/CoupleService.js
             src/services/ChatService.js
             src/services/MusicService.js
+            src/services/ItunesMusicProvider.js
+            src/services/LyricsService.js
             api/rjavan.js
             api/deezer.js
+            api/itunes.js
+            api/lyrics.js
             api/youtube.js
             api/telegram.js
           )
@@ -51,6 +55,21 @@ jobs:
 
       - name: Existing regression suite
         run: node scripts/phase5-tests.js
+
+      - name: Music integration guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "installItunesMusicProviderWhenReady" src/main.js
+          grep -q "new LyricsService" src/main.js
+          grep -q "src/services/ItunesMusicProvider.js" sw.js
+          grep -q "src/services/LyricsService.js" sw.js
+          grep -q "itunes.apple.com" api/itunes.js
+          grep -q "lrclib.net/api" api/lyrics.js
+          if grep -qE 'AIza|apify_api_' api/itunes.js api/lyrics.js src/services/ItunesMusicProvider.js src/services/LyricsService.js; then
+            echo 'Unexpected credential literal in keyless music integration.' >&2
+            exit 1
+          fi
 
       - name: Reject obvious server secrets
         shell: bash
