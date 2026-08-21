@@ -7,7 +7,13 @@
 // fresh devices do not depend on the legacy local username->email map.
 import { AuthService } from './AuthService.js';
 import { installUsernameLoginFallback } from './UsernameLoginBridge.js';
+import { installMusicRoomEnhancer } from './MusicRoomEnhancer.js';
 installUsernameLoginFallback(AuthService);
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installMusicRoomEnhancer, { once: true });
+} else {
+    installMusicRoomEnhancer();
+}
 
 function artwork600(item) {
     const url = item?.artworkUrl100 || item?.artworkUrl60 || item?.artworkUrl30 || null;
