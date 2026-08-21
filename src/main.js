@@ -40,6 +40,17 @@ function getApp() {
     return window.app || null;
 }
 
+function syncPersistedAvatar(app) {
+    if (!app?.currentUser || !app?.currentProfile || !window.userService) return;
+    if (app.currentProfile.avatar_url) {
+        window.userService.saveAvatar(app.currentUser.id, app.currentProfile.avatar_url);
+    } else {
+        window.userService.removeAvatar(app.currentUser.id);
+    }
+    app.renderProfile?.();
+    app.updateAvatars?.();
+}
+
 function dispatchAuthEvent(event, session) {
     const app = getApp();
     if (!appReady || !app) {
@@ -57,13 +68,14 @@ function dispatchAuthEvent(event, session) {
         return;
     }
     if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
-        app.handleSignedIn?.(session, event);
+        Promise.resolve(app.handleSignedIn?.(session, event)).then(() => syncPersistedAvatar(app));
     }
 }
 
 window.LoveHubMarkAppReady = (app) => {
     if (app) window.app = app;
     appReady = true;
+    syncPersistedAvatar(app);
     const events = queuedEvents.splice(0);
     for (const { event, session } of events) dispatchAuthEvent(event, session);
 };
@@ -132,6 +144,60 @@ if (passwordSubmit) {
             passwordSubmit.disabled = false;
             passwordSubmit.textContent = previousText || 'Change Password';
         }
+    }, true);
+}
+
+// Real-account avatar bridge. The legacy shell still renders avatars from its
+// local cache, so persist the source of truth in Supabase Storage/Profile and
+// mirror only the resulting public URL into that cache for compatibility.
+const avatarInput = document.getElementById('avatarFileInput');
+if (avatarInput) {
+    avatarInput.addEventListener('change', async (event) => {
+        if (!loveHubAuth.isReady() || !loveHubAuth.isSupabaseUser()) return;
+
+        event.stopImmediatePropagation();
+        const app = getApp();
+        const file = event.target.files?.[0];
+        if (!file || !app?.currentUser?.id) return;
+
+        const result = await loveHubProfile.uploadAvatar(app.currentUser.id, file);
+        event.target.value = '';
+        if (!result.success) {
+            app.showToast?.(result.error || 'Could not upload photo');
+            return;
+        }
+
+        app.currentProfile = result.profile;
+        window.userService?.saveAvatar(app.currentUser.id, result.avatarUrl);
+        document.getElementById('avatarModal')?.classList.remove('active');
+        app.renderProfile?.();
+        app.updateAvatars?.();
+        app.showToast?.('Photo updated');
+    }, true);
+}
+
+const removeAvatarButton = document.getElementById('removeAvatarBtn');
+if (removeAvatarButton) {
+    removeAvatarButton.addEventListener('click', async (event) => {
+        if (!loveHubAuth.isReady() || !loveHubAuth.isSupabaseUser()) return;
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const app = getApp();
+        if (!app?.currentUser?.id) return;
+
+        const result = await loveHubProfile.removeAvatar(app.currentUser.id, app.currentProfile?.avatar_url || null);
+        if (!result.success) {
+            app.showToast?.(result.error || 'Could not remove photo');
+            return;
+        }
+
+        app.currentProfile = result.profile;
+        window.userService?.removeAvatar(app.currentUser.id);
+        document.getElementById('avatarModal')?.classList.remove('active');
+        app.renderProfile?.();
+        app.updateAvatars?.();
+        app.showToast?.('Photo removed');
     }, true);
 }
 
