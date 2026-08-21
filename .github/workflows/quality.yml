@@ -1,0 +1,70 @@
+name: LoveHub Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: JavaScript syntax checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            app.js
+            chat-rich.js
+            music-search.js
+            music-player.js
+            music-room.js
+            src/main.js
+            src/services/AuthService.js
+            src/services/ProfileService.js
+            src/services/CoupleService.js
+            src/services/ChatService.js
+            src/services/MusicService.js
+            api/rjavan.js
+            api/deezer.js
+            api/youtube.js
+            api/telegram.js
+          )
+          for f in "${files[@]}"; do
+            node --check "$f"
+          done
+
+      - name: Build script syntax
+        run: sh -n scripts/build.sh
+
+      - name: Existing regression suite
+        run: node scripts/phase5-tests.js
+
+      - name: Reject obvious server secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nE '(SUPABASE_SERVICE_ROLE|service_role[[:space:]]*[:=][[:space:]]*["'"''][A-Za-z0-9._-]{20,}|sb_secret_[A-Za-z0-9_-]{10,})' -- ':!*.md' ':!supabase/migrations/**'; then
+            echo 'Potential server-side secret found in tracked runtime source.' >&2
+            exit 1
+          fi
+
+      - name: Guard stale legacy schema
+        shell: bash
+        run: |
+          test ! -f supabase/schema.sql || {
+            echo 'supabase/schema.sql is legacy and must not be restored; migrations are the source of truth.' >&2
+            exit 1
+          }
