@@ -8,6 +8,7 @@ import { ProfileService } from './services/ProfileService.js';
 import { CoupleService } from './services/CoupleService.js';
 import { ChatService } from './services/ChatService.js';
 import { MusicService } from './services/MusicService.js';
+import { LyricsService } from './services/LyricsService.js';
 import { NotificationService } from './services/NotificationService.js';
 import { SoundService } from './services/SoundService.js';
 import { OnboardingFlow } from './onboarding/OnboardingFlow.js';
@@ -22,6 +23,7 @@ const loveHubProfile = new ProfileService();
 const loveHubCouple = new CoupleService();
 const loveHubChat = new ChatService();
 const loveHubMusic = new MusicService();
+const loveHubLyrics = new LyricsService();
 const loveHubNotifications = new NotificationService();
 const loveHubSounds = new SoundService();
 window.LoveHubAuth = loveHubAuth;
@@ -29,6 +31,7 @@ window.LoveHubProfile = loveHubProfile;
 window.LoveHubCouple = loveHubCouple;
 window.LoveHubChat = loveHubChat;
 window.LoveHubMusic = loveHubMusic;
+window.LoveHubLyrics = loveHubLyrics;
 window.LoveHubNotifications = loveHubNotifications;
 window.LoveHubSounds = loveHubSounds;
 window.LoveHubOnboarding = new OnboardingFlow();
@@ -200,6 +203,22 @@ if (removeAvatarButton) {
         app.renderProfile?.();
         app.updateAvatars?.();
         app.showToast?.('Photo removed');
+    }, true);
+}
+
+// Real lyrics for the canonical player. Capture the existing Lyrics button so
+// the old placeholder handler never wins when a track is loaded.
+const lyricsButton = document.getElementById('npLyrics');
+if (lyricsButton) {
+    lyricsButton.addEventListener('click', async (event) => {
+        const track = window.LoveHubMusicPlayer?.current || null;
+        if (!track) {
+            getApp()?.showToast?.('No track selected');
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        await loveHubLyrics.openForTrack(track);
     }, true);
 }
 
