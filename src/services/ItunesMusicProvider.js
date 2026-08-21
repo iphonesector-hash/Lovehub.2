@@ -2,6 +2,13 @@
 // Uses LoveHub's same-origin /api/itunes relay. Audio previews remain direct
 // Apple CDN URLs; this module never downloads or proxies media.
 
+// This module is imported by src/main.js before AuthService is instantiated.
+// Install the cross-device username-login fallback here so Private Browsing and
+// fresh devices do not depend on the legacy local username->email map.
+import { AuthService } from './AuthService.js';
+import { installUsernameLoginFallback } from './UsernameLoginBridge.js';
+installUsernameLoginFallback(AuthService);
+
 function artwork600(item) {
     const url = item?.artworkUrl100 || item?.artworkUrl60 || item?.artworkUrl30 || null;
     return url ? String(url).replace(/\/\d+x\d+bb\./, '/600x600bb.') : null;
