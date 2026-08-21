@@ -218,11 +218,44 @@ export class AuthService {
         }
     }
 
+    // Recovery-link flow: the recovery session itself is the authorization.
     async updatePassword(newPassword) {
         if (!this.isReady()) return { success: false, error: 'Backend not configured' };
         try {
             const { error } = await supabaseClient.auth.updateUser({ password: newPassword });
             return { success: !error, error: error?.message };
+        } catch (error) {
+            return { success: false, error: error.message || String(error) };
+        }
+    }
+
+    // Account-settings flow: verify the current credential before changing the
+    // password. This intentionally uses signInWithPassword instead of relying
+    // on newer SDK-only currentPassword options, so it works with LoveHub's
+    // vendored Supabase client too.
+    async changePassword(currentPassword, newPassword) {
+        if (!this.isReady()) return { success: false, error: 'Backend not configured' };
+        if (!currentPassword) return { success: false, error: 'Current password is required' };
+        if (!newPassword) return { success: false, error: 'New password is required' };
+
+        try {
+            const user = await this.getUser();
+            const email = user?.email || this.session?.user?.email;
+            if (!email) return { success: false, error: 'Could not resolve the account email' };
+
+            const { data: reauthData, error: reauthError } = await supabaseClient.auth.signInWithPassword({
+                email,
+                password: currentPassword
+            });
+            if (reauthError) {
+                return { success: false, error: 'Current password is incorrect' };
+            }
+
+            if (reauthData?.session) this.session = reauthData.session;
+
+            const { data, error } = await supabaseClient.auth.updateUser({ password: newPassword });
+            if (error) return { success: false, error: error.message };
+            return { success: true, user: data?.user || null };
         } catch (error) {
             return { success: false, error: error.message || String(error) };
         }
