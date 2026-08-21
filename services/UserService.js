@@ -106,4 +106,5 @@ class UserService {
 }
 
 const userService = new UserService();
+window.userService = userService;
 
