@@ -1,58 +1,33 @@
-// Visible Music Room runtime fixes for iOS/mobile.
-// Additive only: keeps the canonical MusicPlayerService and existing search UI.
+// Music Room runtime compatibility fixes for iOS/mobile.
+// Keeps the canonical MusicPlayerService and normalizes provider payloads
+// before playback so provider-specific metadata cannot break the player.
 
-function text(value) { return String(value == null ? '' : value); }
-
-function appleTrack(item) {
-    const preview = item?.previewUrl ? String(item.previewUrl) : '';
-    if (!preview || item?.kind !== 'song') return null;
-    const art = item.artworkUrl100 ? String(item.artworkUrl100).replace(/\/\d+x\d+bb\./, '/600x600bb.') : '';
-    return {
-        id: String(item.trackId || ''),
-        title: text(item.trackName || 'Untitled'),
-        artist: text(item.artistName || ''),
-        album: text(item.collectionName || ''),
-        artworkUrl: art,
-        coverUrl: art,
-        duration: Number(item.trackTimeMillis || 0) / 1000,
-        playableUrl: preview,
-        streamUrl: preview,
-        audioUrl: preview,
-        playable: true,
-        provider: 'itunes',
-        providerId: 'itunes',
-        source: 'Apple Music Preview',
-        sourceType: 'preview',
-        playbackMode: 'html5-audio',
-        pageUrl: item.trackViewUrl || null,
-        dedupeKey: 'itunes:' + String(item.trackId || preview)
-    };
+function isMusicActive() {
+    const page = document.getElementById('musicPage');
+    if (!page) return false;
+    const activePage = document.querySelector('.page.active');
+    if (activePage === page || page.classList.contains('active')) return true;
+    const style = getComputedStyle(page);
+    const rect = page.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
 }
 
-function deezerTrack(item) {
-    const preview = item?.preview ? String(item.preview) : '';
-    if (!preview) return null;
-    const art = item?.album?.cover_xl || item?.album?.cover_big || item?.album?.cover_medium || '';
-    return {
-        id: String(item.id || ''),
-        title: text(item.title_short || item.title || 'Untitled'),
-        artist: text(item?.artist?.name || ''),
-        album: text(item?.album?.title || ''),
-        artworkUrl: art,
-        coverUrl: art,
-        duration: Number(item.duration || 0),
-        playableUrl: preview,
-        streamUrl: preview,
-        audioUrl: preview,
-        playable: true,
-        provider: 'deezer',
-        providerId: 'deezer',
-        source: 'Deezer Preview',
-        sourceType: 'preview',
-        playbackMode: 'html5-audio',
-        pageUrl: item.link || null,
-        dedupeKey: 'deezer:' + String(item.id || preview)
-    };
+function syncMiniPlayer() {
+    const active = isMusicActive();
+    document.documentElement.classList.toggle('lh-music-page-active', active);
+    const mini = document.getElementById('miniPlayer');
+    if (!mini) return;
+    if (active) {
+        mini.style.setProperty('display', 'none', 'important');
+        mini.style.setProperty('visibility', 'hidden', 'important');
+        mini.style.setProperty('pointer-events', 'none', 'important');
+        mini.setAttribute('aria-hidden', 'true');
+    } else {
+        mini.style.removeProperty('display');
+        mini.style.removeProperty('visibility');
+        mini.style.removeProperty('pointer-events');
+        mini.removeAttribute('aria-hidden');
+    }
 }
 
 function ensureStyles() {
@@ -60,134 +35,146 @@ function ensureStyles() {
     const style = document.createElement('style');
     style.id = 'musicRoomEnhancerStyles';
     style.textContent = `
-      #musicPage.active ~ * #miniPlayer, body:has(#musicPage.active) #miniPlayer { display:none !important; }
-      .lh-provider-strip{display:flex;gap:7px;overflow-x:auto;padding:2px 2px 10px;scrollbar-width:none}
-      .lh-provider-chip{flex:0 0 auto;padding:6px 10px;border-radius:999px;font-size:11px;font-weight:700;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);opacity:.9}
-      .lh-provider-chip.ok:before{content:'● ';color:#30d158}.lh-provider-chip.warn:before{content:'● ';color:#ff9f0a}
-      .lh-extra-wrap{margin:14px 0 24px}.lh-extra-title{font-size:14px;font-weight:800;margin:0 0 9px 2px}
-      .lh-extra-list{display:grid;gap:8px}.lh-extra-track{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.055);border-radius:15px;min-width:0}
-      .lh-extra-art{width:48px;height:48px;flex:0 0 48px;border-radius:10px;background:rgba(255,255,255,.08) center/cover no-repeat}
-      .lh-extra-meta{min-width:0;flex:1}.lh-extra-name{font-size:13px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.lh-extra-artist{font-size:11px;opacity:.62;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}.lh-extra-source{font-size:9px;opacity:.48;margin-top:3px}
-      .lh-extra-play{width:38px;height:38px;border:0;border-radius:50%;background:rgba(255,55,95,.18);color:inherit;font-size:16px}
-      .lh-hero-lyrics{border:0;border-radius:999px;padding:8px 12px;background:rgba(255,255,255,.09);color:inherit;font-size:11px;font-weight:750;margin-left:7px}
+      html.lh-music-page-active #miniPlayer{display:none!important;visibility:hidden!important;pointer-events:none!important}
+      .lh-provider-strip{display:flex;gap:7px;overflow-x:auto;padding:2px 2px 9px;scrollbar-width:none}
+      .lh-provider-chip{flex:0 0 auto;padding:6px 10px;border-radius:999px;font-size:11px;font-weight:700;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1)}
+      .lh-provider-chip:before{content:'● ';color:#30d158}
+      .lh-music-tools{display:flex;gap:8px;align-items:center;margin:0 0 12px}
+      .lh-lyrics-btn{border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:8px 13px;background:rgba(255,55,95,.13);color:inherit;font:inherit;font-size:12px;font-weight:750}
     `;
     document.head.appendChild(style);
 }
 
-function isMusicActive() {
-    return document.getElementById('musicPage')?.classList.contains('active');
-}
-
-function syncMiniPlayer() {
-    const mini = document.getElementById('miniPlayer');
-    if (!mini) return;
-    if (isMusicActive()) {
-        mini.style.setProperty('display', 'none', 'important');
-        mini.setAttribute('aria-hidden', 'true');
-    } else {
-        mini.style.removeProperty('display');
-        mini.removeAttribute('aria-hidden');
+function installProviderStripAndLyrics() {
+    const search = document.getElementById('musicSearchBar');
+    if (!search) return;
+    let strip = document.getElementById('lhProviderStrip');
+    if (!strip) {
+        strip = document.createElement('div');
+        strip.id = 'lhProviderStrip';
+        strip.className = 'lh-provider-strip';
+        strip.innerHTML = '<span class="lh-provider-chip">Apple</span><span class="lh-provider-chip">Deezer</span><span class="lh-provider-chip">Radio Javan</span><span class="lh-provider-chip">YouTube</span><span class="lh-provider-chip">Archive</span><span class="lh-provider-chip">Audius</span>';
+        search.insertAdjacentElement('afterend', strip);
+    }
+    if (!document.getElementById('lhLyricsButton')) {
+        const tools = document.createElement('div');
+        tools.className = 'lh-music-tools';
+        const lyrics = document.createElement('button');
+        lyrics.type = 'button';
+        lyrics.id = 'lhLyricsButton';
+        lyrics.className = 'lh-lyrics-btn';
+        lyrics.textContent = 'Lyrics';
+        lyrics.addEventListener('click', async () => {
+            const track = window.LoveHubMusicPlayer?.current;
+            if (!track) {
+                window.app?.showToast?.('Play a song first');
+                return;
+            }
+            await window.LoveHubLyrics?.openForTrack?.(track);
+        });
+        tools.appendChild(lyrics);
+        strip.insertAdjacentElement('afterend', tools);
     }
 }
 
-function installProviderStrip() {
-    const search = document.getElementById('musicSearchBar');
-    if (!search || document.getElementById('lhProviderStrip')) return;
-    const row = document.createElement('div');
-    row.id = 'lhProviderStrip';
-    row.className = 'lh-provider-strip';
-    row.innerHTML = '<span class="lh-provider-chip ok">Apple</span><span class="lh-provider-chip ok">Deezer</span><span class="lh-provider-chip ok">Archive</span><span class="lh-provider-chip ok">Audius</span><span class="lh-provider-chip warn">Radio Javan fallback</span>';
-    search.insertAdjacentElement('afterend', row);
+function validYoutubeId(value) {
+    const s = String(value || '').trim();
+    return /^[A-Za-z0-9_-]{11}$/.test(s) ? s : null;
 }
 
-function makeTrackRow(track) {
-    const row = document.createElement('div');
-    row.className = 'lh-extra-track';
-    const art = document.createElement('div');
-    art.className = 'lh-extra-art';
-    if (track.artworkUrl) art.style.backgroundImage = `url("${String(track.artworkUrl).replace(/"/g, '')}")`;
-    const meta = document.createElement('div'); meta.className = 'lh-extra-meta';
-    const name = document.createElement('div'); name.className = 'lh-extra-name'; name.textContent = track.title;
-    const artist = document.createElement('div'); artist.className = 'lh-extra-artist'; artist.textContent = track.artist || 'Unknown artist';
-    const source = document.createElement('div'); source.className = 'lh-extra-source'; source.textContent = track.source;
-    meta.append(name, artist, source);
-    const play = document.createElement('button'); play.type = 'button'; play.className = 'lh-extra-play'; play.setAttribute('aria-label', 'Play'); play.textContent = '▶';
-    play.addEventListener('click', async () => {
-        const player = window.LoveHubMusicPlayer;
-        if (!player?.loadTrack) return;
-        await player.loadTrack(track, { autoplay: true, fromUser: true });
-        document.getElementById('musicHero')?.style.removeProperty('display');
-    });
-    row.append(art, meta, play);
-    return row;
+function youtubeIdFromUrl(value) {
+    if (!value) return null;
+    try {
+        const u = new URL(String(value), window.location.origin);
+        if (/youtu\.be$/i.test(u.hostname)) return validYoutubeId(u.pathname.split('/').filter(Boolean)[0]);
+        if (/youtube\.com$/i.test(u.hostname) || /youtube-nocookie\.com$/i.test(u.hostname)) {
+            return validYoutubeId(u.searchParams.get('v')) || validYoutubeId(u.pathname.split('/').filter(Boolean).pop());
+        }
+    } catch (_) { /* ignore */ }
+    return null;
 }
 
-async function fetchExtras(query) {
-    const q = String(query || '').trim();
-    if (!q) return [];
-    const requests = [
-        fetch('/api/itunes?query=' + encodeURIComponent(q) + '&limit=12', { headers: { Accept: 'application/json' } })
-            .then(r => r.ok ? r.json() : null).then(b => (b?.results || []).map(appleTrack).filter(Boolean)).catch(() => []),
-        fetch('/api/deezer?query=' + encodeURIComponent(q) + '&limit=12', { headers: { Accept: 'application/json' } })
-            .then(r => r.ok ? r.json() : null).then(b => (b?.data || []).map(deezerTrack).filter(Boolean)).catch(() => [])
-    ];
-    const groups = await Promise.all(requests);
-    const seen = new Set();
-    const out = [];
-    for (const track of groups.flat()) {
-        const key = (track.title + '|' + track.artist).toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key); out.push(track);
-        if (out.length >= 16) break;
+function safeDirectAudio(value) {
+    if (!value) return null;
+    let s = String(value).trim();
+    if (!/^https?:\/\//i.test(s) || /\.m3u8(?:$|\?)/i.test(s)) return null;
+    if (/^http:\/\//i.test(s)) s = 'https://' + s.slice(7);
+    return s;
+}
+
+function normalizePlaybackTrack(track) {
+    if (!track || typeof track !== 'object') return track;
+    const out = { ...track, metadata: { ...(track.metadata || {}) } };
+    const provider = String(out.providerId || out.provider || '').toLowerCase();
+
+    const youtubeLike = provider.includes('youtube') || out.playbackMode === 'youtube-embed' || out.metadata.youtubeId || out.metadata?.youtube?.videoId;
+    if (youtubeLike) {
+        const videoId = validYoutubeId(out.metadata?.youtube?.videoId)
+            || validYoutubeId(out.metadata?.youtubeId)
+            || validYoutubeId(out.videoId)
+            || validYoutubeId(out.id)
+            || youtubeIdFromUrl(out.pageUrl)
+            || youtubeIdFromUrl(out.externalUrl)
+            || youtubeIdFromUrl(out.playableUrl);
+        if (videoId) {
+            out.playbackMode = 'youtube-embed';
+            out.playable = true;
+            out.metadata.youtube = { ...(out.metadata.youtube || {}), videoId, playbackMode: 'youtube-embed' };
+        }
+    }
+
+    const radioLike = provider === 'codebazan-rjavan' || provider.includes('rjavan') || /radio\s*javan/i.test(String(out.source || ''));
+    if (radioLike) {
+        const md = out.metadata || {};
+        const candidates = [
+            md.hq_link, md.hqLink, out.hq_link,
+            md.lq_link, md.lqLink, out.lq_link,
+            md.link, out.link,
+            out.playableUrl, out.audioUrl, out.streamUrl
+        ];
+        const direct = candidates.map(safeDirectAudio).find(Boolean);
+        if (direct) {
+            out.playableUrl = direct;
+            out.audioUrl = direct;
+            out.streamUrl = direct;
+            out.playbackMode = 'html5-audio';
+            out.playable = true;
+        }
     }
     return out;
 }
 
-async function renderExtras(query) {
-    const host = document.getElementById('musicResults');
-    if (!host) return;
-    document.getElementById('lhExtraProviderResults')?.remove();
-    const tracks = await fetchExtras(query);
-    if (!tracks.length) return;
-    const wrap = document.createElement('section'); wrap.id = 'lhExtraProviderResults'; wrap.className = 'lh-extra-wrap';
-    const title = document.createElement('div'); title.className = 'lh-extra-title'; title.textContent = 'Apple Music & Deezer';
-    const list = document.createElement('div'); list.className = 'lh-extra-list'; tracks.forEach(t => list.appendChild(makeTrackRow(t)));
-    wrap.append(title, list); host.appendChild(wrap);
-}
-
-function bindSearchAugment() {
-    const input = document.getElementById('musicSearchInput');
-    const btn = document.getElementById('musicSearchBtn');
-    if (!input || !btn || btn.dataset.lhEnhanced === '1') return;
-    btn.dataset.lhEnhanced = '1';
-    btn.addEventListener('click', () => setTimeout(() => renderExtras(input.value), 120), false);
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') setTimeout(() => renderExtras(input.value), 120);
-    }, false);
-}
-
-function installHeroLyrics() {
-    const actions = document.querySelector('.music-hero-actions');
-    if (!actions || document.getElementById('lhHeroLyrics')) return;
-    const button = document.createElement('button');
-    button.id = 'lhHeroLyrics'; button.type = 'button'; button.className = 'lh-hero-lyrics'; button.textContent = 'Lyrics';
-    button.addEventListener('click', async () => {
-        const track = window.LoveHubMusicPlayer?.current;
-        if (!track) return window.app?.showToast?.('No track selected');
-        await window.LoveHubLyrics?.openForTrack?.(track);
-    });
-    actions.appendChild(button);
+function installPlaybackCompatibility() {
+    let tries = 0;
+    const attach = () => {
+        const player = window.LoveHubMusicPlayer;
+        if (!player?.loadTrack) return false;
+        if (player.__lhPlaybackCompatibilityInstalled) return true;
+        const originalLoadTrack = player.loadTrack.bind(player);
+        player.loadTrack = function(track, options) {
+            return originalLoadTrack(normalizePlaybackTrack(track), options);
+        };
+        player.__lhPlaybackCompatibilityInstalled = true;
+        return true;
+    };
+    if (attach()) return;
+    const timer = setInterval(() => {
+        tries += 1;
+        if (attach() || tries >= 80) clearInterval(timer);
+    }, 100);
 }
 
 export function installMusicRoomEnhancer() {
     ensureStyles();
-    installProviderStrip();
-    bindSearchAugment();
-    installHeroLyrics();
+    installProviderStripAndLyrics();
+    installPlaybackCompatibility();
     syncMiniPlayer();
-    const page = document.getElementById('musicPage');
-    if (page) new MutationObserver(syncMiniPlayer).observe(page, { attributes: true, attributeFilter: ['class'] });
-    const mini = document.getElementById('miniPlayer');
-    if (mini) new MutationObserver(syncMiniPlayer).observe(mini, { attributes: true, attributeFilter: ['style', 'class'] });
+
+    const pages = document.querySelector('.pages-container') || document.body;
+    new MutationObserver(syncMiniPlayer).observe(pages, { subtree: true, attributes: true, attributeFilter: ['class'] });
     document.addEventListener('click', () => setTimeout(syncMiniPlayer, 0), true);
+    window.addEventListener('pageshow', syncMiniPlayer);
+    // Legacy code can re-open the mini player after a delayed render; keep a
+    // tiny guard while the app is alive so Music page always wins.
+    setInterval(syncMiniPlayer, 250);
 }
